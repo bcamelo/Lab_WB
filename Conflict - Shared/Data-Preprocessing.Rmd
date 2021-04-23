@@ -1,0 +1,209 @@
+---
+title: "Data Preprocessing"
+author: "Boseong Yun"
+date: "4/23/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Loading libraries
+library(tidymodels) 
+library(lubridate) 
+library(felm) # fixed effects package
+library(plm) # fixed effects package
+library(discrim) # Linear Discriminant Model
+library(tidyverse)
+library(here) # used for relative filepath
+library(raster) # used for importing shapefile
+library(ncdf4) # used for reading netCDF file
+library(sf) # used for spatial join
+```
+
+# Loading netCDF files
+
+```{r}
+# Opening ERA data: temperature and precipitation
+nc <- nc_open(here("adaptor.mars.internal-1618978096.60298-4541-17-222d58bf-b1bc-4bf4-8fe0-1d49582df00e.nc"))
+
+# Getting the relevant lat and lon
+lat <- ncvar_get(nc, "latitude") # saving latitude
+lon <- ncvar_get(nc, "longitude") # saving longitud 
+time <- ncvar_get(nc, "time") # saiving time
+time <- as_datetime("1900-1-1") + lubridate::as.difftime(time, units = "hours") 
+# the time is stored as the number of hours lapsed since the 1900-01-01 as the origin
+# hence the usage of difftime with the units = hours
+
+# Creating an output path for temperature
+output_temp <- list()
+
+for(i in seq_along(time)) {
+  
+  # Fetching the data
+  temp <- ncvar_get(nc, "t2m",
+                    start = c(1, 1, 1, i),
+                    count = c(-1, -1, -1, 1))
+  # setting start = 1 and count = -1 iterates through all observations 
+  
+  # Creating the dataframe for each 
+  df <- temp %>%
+    as_tibble() %>%
+    dplyr::select(1:length(lat)) %>%
+    set_names(lat %>% round(., digits = 4)) %>%
+    mutate(
+      lat = lon,
+      tm = time[i]
+    ) %>%
+    pivot_longer(-c(lat, tm), names_to = "lon") %>%
+    dplyr::select(tm, lat, lon, value)
+  
+  
+  # Saving the ouput
+  output_temp[[i]] <- df
+  
+}
+
+# Creating an temperature 2m
+temp_df <- output_temp %>%
+  bind_rows() %>%
+  drop_na() 
+
+# Creating an output path for temperature
+output_prcp <- list()
+
+for(i in seq_along(time)) {
+  
+  # Fetching the data
+  prcp <- ncvar_get(nc, "tp",
+                    start = c(1, 1, 1, i),
+                    count = c(-1, -1, -1, 1))
+  # setting start = 1 and count = -1 itereates through all obs
+  
+  # Creating the dataframe for each
+  df <- prcp %>%
+    as_tibble() %>%
+    dplyr::select(1:length(lat)) %>%
+    set_names(lat %>% round(., digits = 4)) %>%
+    mutate(
+      lat = lon,
+      tm = time[i]
+    ) %>%
+    pivot_longer(-c(lat, tm), names_to = "lon") %>%
+    dplyr::select(tm, lat, lon, value)
+  
+  
+  # Saving the ouput
+  output_prcp[[i]] <- df
+  
+}
+
+# Creating an temperature 2m
+prcp_df <- output_prcp %>%
+  bind_rows() %>%
+  drop_na()
+
+# Saving the dataframes
+#temp_df %>% write_csv("temp_era_ivorycoast.csv")
+#prcp_df %>% write_csv("prcp_era_ivorycoast.csv")
+
+# Creating a combined spatial era dataset
+temp <- temp_df %>% rename("temp" = value)
+prcp <- prcp_df %>% rename("prcp" = value)
+era <- temp %>% left_join(prcp) %>%
+  st_as_sf(coords = c("lat", "lon"), crs = 4326)
+```
+
+
+```{r era test}
+# Load in a shapefile of the regions of Cote d'Ivoire. This command automatically downloads the shapefile from the GADM website (level 2 is regions).
+ci_regions <-  raster::getData('GADM', country = "CIV", level = 2) %>%
+  # Convert to a sf object with the same CRS as we used above
+  st_as_sf(crs = 4326)
+
+test <- output_prcp[[1]] %>%
+  st_as_sf(coords = c("lat", "lon"), crs = 4326)
+
+ggplot() + 
+  geom_sf(data = ci_regions) + 
+  geom_sf(data = test, color = "red", size = 0.5) +
+  theme_minimal()
+```
+
+
+# Loading ACLED & Spatial Merging
+
+```{r}
+# Readging the ACLED datafile
+ivory <- read_csv(here("ivory_coast.csv"))
+
+
+# Transforming it into spatial data
+data <- ivory %>%
+  mutate(
+    date = dmy(event_date),
+    month = month(date)
+    ) %>%
+  dplyr::select(year, fatalities, inter1, inter2, month, latitude, longitude) %>%
+  st_as_sf(coords = c("latitude", "longitude"), crs = 4326)
+
+# Spatial Join: It is important to have the MULTYPOLYGON geometric object (ci_regions) 
+# to facilitate the spatial join because both the ACLED and ERA data are POINT geometric
+# objects
+spatial_merged <- ci_regions %>%
+  st_join(data) %>%
+  st_join(era)
+
+# Spatially Aggregated by month
+spatial_aggregated <- spatial_merged %>%
+  group_by(tm, NAME_2) %>%
+  summarize(
+    count = n(),
+    mean_temp = mean(temp),
+    mean_prcp = mean(prcp)
+  )
+
+
+# Saving
+#spatial_aggregated %>%
+#  saveRDS("aggregated.RDS")
+
+#spatial_aggregated %>%
+#  st_drop_geometry() %>%
+#  write_csv("aggregated_nogeo.csv")
+```
+
+# Modeling
+
+```{r}
+# merged
+merged <- spatial_aggregated %>%
+  st_drop_geometry()
+
+# Cocoa Regions: Regions contested with land conflicts
+cocoa_regions <- c("Cavally", "Guemon", "Tonkpi")
+
+# creating a dataframe for modeling
+mod_df <- merged %>%
+  ungroup() %>%
+  mutate(
+    cocoa = factor(ifelse(NAME_2 %in% cocoa_regions, 1, 0)),
+    year = year(tm), 
+    mean_team_pm = dplyr::lag(mean_temp, 33), # delaying by one month
+    mean_prcp_pm = dplyr::lag(mean_prcp, 33), # delaying by one month
+    mean_temp_py = dplyr::lag(mean_temp, 33 * 12), # dealying by one year
+    mean_prcp_py = dplyr::lag(mean_prcp, 33 * 12) # delaying by one year
+    )
+
+mod_df_clean <- mod_df %>%
+  mutate(NAME_2 = ifelse(cocoa == 1, "cocoa", NAME_2)) %>%
+  dplyr::select(-tm, -mean_team_pm, -mean_prcp_pm, -cocoa) 
+
+    
+mod1 <- plm::plm(data = mod_df_clean,
+                 formula = count ~ ., 
+                 effect = "individual", 
+                 index = c("NAME_2"))
+```
+
+
