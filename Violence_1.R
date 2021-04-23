@@ -1,5 +1,6 @@
 library(tidyverse)
 library(sf)
+library(lubridate)
 library(raster)
 
 
@@ -23,8 +24,6 @@ bf_regions <-  raster::getData('GADM', country = "BFA", level = 1) %>%
   # Convert to a sf object with the same CRS as we used above
   st_as_sf(crs = 4326)
 
-
-
 acled_ml <- acled %>%
   filter(COUNTRY == "Mali" & FATALITIES != 0)
 
@@ -35,12 +34,16 @@ acled_bf <- acled %>%
   ggplot() +
   geom_sf(data = ml_regions) +
   geom_sf(data = acled_ml, aes(alpha = 0.2, color = "red")) +
-  labs(title = "fatalities", color = "Protests", alpha = "") + 
+  labs(title = "Fatalities in Mali", color = "events", alpha = "") + 
   theme_minimal()
 
   
   ggplot() +
     geom_sf(data = bf_regions) +
     geom_sf(data = acled_bf, aes(alpha = 0.2, color = "red")) +
-    labs(title = "fatalities", color = "Protests", alpha = "") + 
+    labs(title = "Fatalities in BF", color = "events", alpha = "") + 
     theme_minimal()
+  
+acled$EVENT_DATE <- as.Date(acled$EVENT_DATE, "%d-%B-%Y")
+
+class(acled$EVENT_DATE)
