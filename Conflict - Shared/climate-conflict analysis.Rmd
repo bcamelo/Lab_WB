@@ -1,0 +1,143 @@
+---
+title: "climate conflict analysis"
+author: "Jessica Anderson"
+date: "4/22/2021"
+output: html_document
+---
+
+```{r setup}
+library(tidyverse)
+library(lubridate)
+library(sf)
+library(ncdf4)
+library(raster)
+```
+
+```{r pre-formatted}
+era_prcp <- read_csv("prcp_era_ivorycoast.csv")
+era_temp <- read_csv("temp_era_ivorycoast.csv")
+
+era_prcp_cln <- era_prcp %>% 
+  mutate(
+    yrmo = ymd(tm), 
+    prcp_mm = value * 1000
+  )
+era_temp_cln <- era_temp %>% 
+  mutate(
+    yrmo = ymd(tm),
+    temp2m_c = value - 273.15
+    )
+
+agg_nogeo <- read_csv("aggregated_nogeo.csv")
+
+agg_geo <- read_rds("aggregated.RDS")
+```
+
+```{r raw-data-raster}
+# I'd like this to work because raster is easy, but we lose the coordinates
+ncname <- "adaptor.mars.internal-1618978096.60298-4541-17-222d58bf-b1bc-4bf4-8fe0-1d49582df00e.nc"
+temp2m_raster <- brick(ncname, varname = "t2m")
+temp2m_array <- getValues(temp2m_raster)
+temp2m <- as_tibble(temp2m_array)
+```
+
+```{r raw-data-ncdf4}
+# https://pjbartlein.github.io/REarthSysSci/netCDF.html
+# open nc file
+ncin <- nc_open(ncname)
+print(ncin)
+
+# get longitude and latitude
+lon <- ncvar_get(ncin, "longitude")
+nlon <- dim(lon)
+lat <- ncvar_get(ncin, "latitude")
+nlat <- dim(lat)
+
+# get time
+time <- ncvar_get(ncin, "time")
+time_units <- ncatt_get(ncin, "time", "units")
+ntime <- dim(time)
+time_units
+
+# get 2-meter temperature
+temp2m_array <- ncvar_get(ncin, "t2m")
+temp2m_fillvalue <- ncatt_get(ncin, "t2m", "_FillValue")
+dim(temp2m_array) # potential future problem - we have an extra dimension
+
+# get total precipitation
+prcp_array <- ncvar_get(ncin, "tp")
+prcp_fillvalue <- ncatt_get(ncin, "tp", "_FillValue")
+dim(prcp_array) # again extra dimension
+
+# close nc file
+nc_close(ncin)
+
+# replace netcdf fill values with NAs
+temp2m_array[temp2m_array == temp2m_fillvalue$value] <- NA
+prcp_array[prcp_array == prcp_fillvalue$value] <- NA
+
+# the expver dimension indicates whether data comes from ERA5 (final data, released
+# about 3 months after real-time) or ERA5T (preliminary data, released within 5 
+# days of real-time)
+# expver == 1 --> ERA5, expver == 5 --> ERA5T
+# I think we should be able to take only expver == 1 and end our data with 2020
+# http://adv-r.had.co.nz/Subsetting.html
+temp2m_array_3d <- temp2m_array[,,1,] # guessing that expver == 1 will be first
+dim(temp2m_array_3d) # correct dimensions
+head(temp2m_array_3d) # not missing values, suggests we correctly kept expver == 1
+prcp_array_3d <- prcp_array[,,1,] # repeat for precipitation
+dim(prcp_array_3d)
+head(prcp_array_3d)
+
+# reshape arrays into vectors and vectors into matrices (lon-lat x time)
+temp2m_vec_long <- as.vector(temp2m_array_3d)
+temp2m_matrix <- matrix(temp2m_vec_long, nrow = nlon * nlat, ncol = ntime)
+dim(temp2m_matrix)
+prcp_vec_long <- as.vector(prcp_array_3d)
+prcp_matrix <- matrix(prcp_vec_long, nrow = nlon * nlat, ncol = ntime)
+
+# convert matrices to dataframes with lon-lat
+lonlat <- as.matrix(expand.grid(lon, lat))
+temp2m_df <- data.frame(cbind(lonlat, temp2m_matrix))
+prcp_df <- data.frame(cbind(lonlat, prcp_matrix))
+
+# add column names
+# we have columns for 24 years and 3 months - from 1997-Jan to 2021-Mar
+start_date <- ymd("1997-Jan-1")
+end_date <- ymd("2021-Mar-1")
+date_range <- seq(start_date, end_date, by = "month")
+date_range_char <- as.character(date_range)
+names(temp2m_df) <- c("lon", "lat", date_range_char)
+names(prcp_df) <- c("lon", "lat", date_range_char)
+
+# convert to tidy long data
+temp2m_tbl <- as_tibble(temp2m_df)
+temp2m_long <- temp2m_tbl %>% 
+  pivot_longer(
+    `1997-01-01`:`2021-03-01`, 
+    names_to = "yrmo", 
+    values_to = "temp2m_k"
+    )
+prcp_tbl <- as_tibble(prcp_df)
+prcp_long <- prcp_tbl %>% 
+  pivot_longer(
+    `1997-01-01`:`2021-03-01`, 
+    names_to = "yrmo", 
+    values_to = "prcp_m"
+  )
+view(temp2m_long %>% head(100))
+
+# could then convert temp to celsius and prcp to millimeters, and merge
+
+# but first check against Boseong's data
+temp_check <- read_csv("temp_era_ivorycoast.csv")
+temp_check %>% 
+  arrange(tm, desc(lon), desc(lat)) %>% 
+  head(10)
+temp2m_long %>% 
+  arrange(yrmo, desc(lat), desc(lon)) %>% 
+  head(10)
+# I have no idea why I have to arrange in different orders but the temp values 
+# look the same between the two datasets
+nrow(temp2m_long %>% drop_na()) # length discrepancy is because Boseong dropped NAs
+```
