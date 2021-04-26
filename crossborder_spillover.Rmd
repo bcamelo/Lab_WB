@@ -1,0 +1,52 @@
+---
+title: "Violence Spillover - Distance Measurement"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(sf)
+```
+
+# Create shapefile for CIV border with BFA or MLI
+
+```{r}
+# Create full CIV border as a line
+civ <- raster::getData('GADM', country = "CIV", level = 0) %>% 
+  st_as_sf(crs = 4326) %>% 
+  # Convert to a projection that uses meters so we can measure distance
+  st_transform(crs = 2165) %>% 
+  st_cast("MULTILINESTRING")
+# Combine BFA and MLI polygons
+bfa_mali <- st_union(
+  x = raster::getData('GADM', country = "BFA", level = 0) %>%
+    st_as_sf(crs = 4326) %>% 
+    st_transform(crs = 2165),
+  y = raster::getData('GADM', country = "MLI", level = 0) %>%
+    st_as_sf(crs = 4326) %>% 
+    st_transform(crs = 2165)
+) 
+# Intersect the two to get the relevant part of the border
+border <- st_intersection(civ, bfa_mali)
+# Check to see it worked
+ggplot() + geom_sf(data = bfa_mali, size = .1) + geom_sf(data = civ, size = .1) + geom_sf(data = border, size = 1, color = "red")
+```
+
+# Distance of each Ivorian region to the border
+
+```{r}
+# Get region level shapefile
+shp <-  raster::getData('GADM', country = "CIV", level = 2) %>% 
+  st_as_sf(crs = 4143) %>% 
+  # Convert to meters projection
+  st_transform(crs = 2165)
+# Compute distance from each region to border segment 
+shp <- cbind(shp, distance = st_distance(shp, border)) %>%
+  mutate(distance = as.numeric(str_extract(distance, "[0-9]+"))) %>%
+  # Only keep relevant variables
+  select(region = NAME_2, distance)
+# Plot to see if it worked
+ggplot() + geom_sf(data = shp, aes(color = distance)) + geom_sf(data = civ, size = .1)
+```
+
