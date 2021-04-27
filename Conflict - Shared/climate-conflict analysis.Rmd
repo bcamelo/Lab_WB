@@ -11,6 +11,8 @@ library(lubridate)
 library(sf)
 library(ncdf4)
 library(raster)
+library(rasterVis)
+library(RColorBrewer)
 ```
 
 ```{r pre-formatted}
@@ -34,11 +36,76 @@ agg_geo <- read_rds("aggregated.RDS")
 ```
 
 ```{r raw-data-raster}
-# I'd like this to work because raster is easy, but we lose the coordinates
+# https://pjbartlein.github.io/REarthSysSci/raster_intro.html
+
+# import region shapefile
+#ci_regions <-  raster::getData('GADM', country = "CIV", level = 2) %>%
+#  st_as_sf(crs = 4326)
+ci_regions <- read_rds("gadm36_CIV_2_sp.rds") %>% 
+  st_as_sf(crs = 4326)
+
+# import 2-meter temperature as a raster brick
 ncname <- "adaptor.mars.internal-1618978096.60298-4541-17-222d58bf-b1bc-4bf4-8fe0-1d49582df00e.nc"
-temp2m_raster <- brick(ncname, varname = "t2m")
-temp2m_array <- getValues(temp2m_raster)
-temp2m <- as_tibble(temp2m_array)
+temp2m_raster <- brick(ncname, varname = "t2m", level = 1)
+temp2m_raster
+
+# plot with CI regions map to test grid-cell geometry (it looks right)
+ci_map_lines <- as(st_geometry(ci_regions), Class = "Spatial")
+levelplot(subset(temp2m_raster, 1), margin = F) + layer(sp.lines(ci_map_lines))
+
+# subset to the first month of data, convert to polygon layer, convert to sf
+temp2m_199701 <- subset(temp2m_raster, 1)
+temp2m_199701_pol <- rasterToPolygons(temp2m_199701)
+temp2m_199701_sf <- st_as_sf(temp2m_199701_pol)
+
+# aggregate temperature data to regions using areal-weighted interpolation
+# check projections and warning about interpreting coordinates as planar
+temp2m_199701_ci <- st_interpolate_aw(
+  temp2m_199701_sf, 
+  to = ci_regions, 
+  extensive = FALSE
+  )
+plot(temp2m_199701_ci)
+ci_regions
+
+# merge interpolated temperature data into main region sf on geometry
+temp2m_199701_merged <- st_join(temp2m_199701_ci, ci_regions, join = st_equals)
+plot(temp2m_199701_merged[,1])
+
+###### function
+## what would it look like to write a function for this?
+# would need to be a for-loop nested inside a function
+temp2m_raster <- brick(ncname, varname = "t2m", level = 1)
+length(names(temp2m_raster))
+
+start_time <- Sys.time()
+for (i in 1:5) {
+  # subset to the i-th month of data, convert to polygon layer, convert to sf
+  temp2m_i <- subset(temp2m_raster, i)
+  temp2m_i_pol <- rasterToPolygons(temp2m_i)
+  temp2m_i_sf <- st_as_sf(temp2m_i_pol)
+  
+  # aggregate temperature data to regions using areal-weighted interpolation
+  # check projections and warning about interpreting coordinates as planar
+  temp2m_i_ci <- st_interpolate_aw(
+    temp2m_i_sf, 
+    to = ci_regions, 
+    extensive = FALSE
+    )
+  
+  # merge interpolated temperature data into main region sf on geometry
+  if (i == 1) {
+    ci_regions_2mtemp <- st_join(temp2m_i_ci, ci_regions, join = st_equals)
+  }
+  if (i > 1) {
+    ci_regions_2mtemp <- st_join(temp2m_i_ci, ci_regions_2mtemp, join = st_equals)
+  } 
+}
+end_time <- Sys.time()
+end_time - start_time
+# 8.7 seconds to run 5 months
+# we have 291 months: 291/5 = 58.2 * 8.7 = 506.34 / 60 = 8.439 minutes
+ci_regions_2mtemp
 ```
 
 ```{r raw-data-ncdf4}
