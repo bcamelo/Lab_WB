@@ -204,7 +204,7 @@ write_csv(final, "final.csv")
 
 ## Regressions
 
-colnames(final)
+view(final)
 
 reg1 <- lm(SUM_EVENTS ~ distance*border_cases, data = final)
 
