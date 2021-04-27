@@ -1,0 +1,168 @@
+---
+title: "Untitled"
+author: "Boseong Yun"
+date: "4/25/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Loading libraries
+library(tidymodels) 
+library(lubridate) 
+library(plm) # fixed effects package
+library(discrim) # Linear Discriminant Model
+library(tidyverse)
+library(here) # used for relative filepath
+library(raster) # used for importing shapefile
+library(ncdf4) # used for reading netCDF file
+library(sf) # used for spatial join
+```
+
+# Loading ACLED & Administrative Shapefile
+
+```{r}
+# Readging the ACLED datafile
+ivory <- read_csv(here("ivory_coast.csv"))
+
+# Load in a shapefile of the regions of Cote d'Ivoire. This command automatically downloads the shapefile from the GADM website (level 2 is regions).
+ci_regions <-  raster::getData('GADM', country = "CIV", level = 2) %>%
+  # Convert to a sf object with the same CRS as we used above
+  st_as_sf(crs = 4326)
+
+
+# Transforming it into spatial data
+data <- ivory %>%
+  mutate(
+    date = dmy(event_date),
+    month = month(date)
+  ) %>%
+  dplyr::select(year, fatalities, inter1, inter2, 
+                month, latitude, longitude) %>%
+  st_as_sf(coords = c("latitude", "longitude"), crs = 4326)
+
+# Spatial Join: It is important to have the MULTYPOLYGON geometric object (ci_regions) 
+# to facilitate the spatial join because both the ACLED and ERA data are POINT geometric objects
+spatial_merged <- ci_regions %>%
+  st_join(data) 
+```
+
+
+# Handling ERA5 data
+
+```{r}
+# Importing temperature (t2m) - expvar level set to 1
+temp <- brick(here("adaptor.mars.internal-1618978096.60298-4541-17-222d58bf-b1bc-4bf4-8fe0-1d49582df00e.nc"), varname = "t2m")
+
+# Importing total participation (tp) - expvar level set to 1 
+prcp <- brick(here("adaptor.mars.internal-1618978096.60298-4541-17-222d58bf-b1bc-4bf4-8fe0-1d49582df00e.nc"), varname = "tp")
+
+
+cdf_to_shape <- function(cdf) {
+  
+  # Transforming the cdf tile into a polygon file
+  polygon_data <- cdf %>%
+    rasterToPolygons() %>%
+    st_as_sf(crs = 4326)
+  
+  # Saving the name of the cdf file
+  cdf_name <- as.character(substitute(cdf))
+  
+  # Cleaning the shapefile
+  clean_shape <- polygon_data %>%
+    pivot_longer(-geometry) %>%
+    mutate(
+      name = substr(name, 2, 11),
+      name = ymd(name)
+    ) %>%
+    set_names(c("geometry", "date", cdf_name)) %>%
+    drop_na() %>%
+    st_as_sf(crs = 4326)
+  
+  # return
+  return(clean_shape)
+  
+}
+
+# Saving the temperature and precipiration shape files 
+temp_shp <- cdf_to_shape(temp)
+prcp_shp <- cdf_to_shape(prcp)
+```
+
+# For loop for ERA 5
+
+### I have checked that the region within the mutate function in the third stage of saving the dataframe to final is in consistent with the assigned coordinates
+```{r}
+# Setting the daates parameter for the forloop
+dates <- temp_shp %>% pull(date) %>% unique()
+
+
+# Temperature ---------------------------------------------------------
+
+# saving the output path for temp
+output_temp <- list() 
+
+# for loop
+for(i in seq_along(dates)) {
+  
+  # filter the data to each year-month
+  filtered <- temp_shp %>% filter(date == dates[i]) 
+  
+  # saving the interpolated data 
+  interpolated <- st_interpolate_aw(filtered[, "temp"],
+                                    spatial_merged, 
+                                    extensive = FALSE)
+  
+  # adding date column for each 
+  final <- interpolated %>% 
+    mutate(
+      date = ymd(dates[i]),
+      region = spatial_merged$NAME_2
+    )
+  
+  
+  # saving the data to each list
+  output_temp[[i]] <- final
+  
+}
+
+# Precipitation ---------------------------------------------------------
+
+# saving the output path for precipitation
+output_prcp <- list() 
+
+# for loop
+for(i in seq_along(dates)) {
+  
+  # filter the data to each year-month
+  filtered <- prcp_shp %>% filter(date == dates[i]) 
+  
+  # saving the interpolated data 
+  interpolated <- st_interpolate_aw(filtered[, "prcp"],
+                                    spatial_merged, 
+                                    extensive = FALSE)
+  
+  # adding date column for each 
+  final <- interpolated %>% mutate(
+    date = ymd(dates[i]),
+    region = spatial_merged$NAME_2
+  )
+  
+  
+  # saving the data to each list
+  output_prcp[[i]] <- final
+  
+}
+```
+
+
+```{r}
+#output_temp %>%
+  #bind_rows() %>%
+  #saveRDS("temp_aw.rds")
+
+#output_prcp %>%
+  #bind_rows() %>%
+  #saveRDS("prcp_aw.rds")
+```
