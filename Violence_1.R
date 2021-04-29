@@ -188,6 +188,13 @@ out_violence <- outborders_total %>%
 
 dist <- read_csv("dist.csv")
 
+acled_civ$ADMIN2 <- as.character(acled_civ$ADMIN2)
+
+
+acled_civ$ADMIN2[acled_civ$ADMIN2 == "Me"] <- "La Me"
+acled_civ$ADMIN2[acled_civ$ADMIN2 == "Sud-Comoe"] <- "Sud Comoe"
+
+acled_civ$ADMIN2 <- as.factor(acled_civ$ADMIN2)
 
 ## Joint
 
@@ -200,11 +207,15 @@ final <- final %>%
 final$SUM_EVENTS[is.na(final$SUM_EVENTS)] <- 0
 final$EVENT[is.na(final$EVENT)] <- 0
 
-write_csv(final, "final.csv")
+final$distance <- final$distance/1000
+
+final_full <- final %>%
+  mutate(border_ev = ifelse(border_cases != 0, 1, 0),
+         border_region = ifelse(distance < 200, 1, 0))
+
+write_csv(final_full, "final_full.csv")
 
 ## Regressions
-
-view(final)
 
 reg1 <- lm(SUM_EVENTS ~ distance*border_cases, data = final)
 
@@ -217,7 +228,40 @@ logit_2 <- glm(EVENT ~ distance*total_cases, data = final, family = "binomial")
 stargazer(reg1, reg2, logit_1, logit_2, type = "text", title="Results", align=TRUE)
 
 
-    
+
+## New Regressions
+
+
+reg3 <- lm(SUM_EVENTS ~ border_region*border_ev, data = final_full)
+
+logit_3 <- glm(EVENT ~ border_region*border_ev, data = final_full, family = "binomial")
+
+
+stargazer(reg3, logit_3, type = "text", title="Results", align=TRUE)
+
+## New Regressions (fixed effects)
+library(survival)
+library(foreign)
+library(plm)
+library(car)
+
+reg4 <- plm (SUM_EVENTS ~ border_region*border_ev, data = final_full, index = "region", model = "within")
+
+logit_4 <- clogit(EVENT ~ border_region*border_ev + strata(region), data = final_full)
+
+
+stargazer(reg3, reg4, logit_3, logit_4, type = "text", title="Results without and with fixed effects", align=TRUE)
+
+
+prob <- predict(logit_3, type="response")
+summary(prob)
+final_full$prob_3 <- prob
+roc1 <- roc(EVENT ~ prob_3, data = final_full)
+plot(roc1, col="red", main = "Area Under ROC for LOGIT_3" , ylab="Sensitivity", xlab="Specificity")
+auc(roc1)
+text(0.5, 0.2, "AUC = 0.6323")
+
+   
 ## Spatial Visualization
 
 acled_clean_ml %>%
