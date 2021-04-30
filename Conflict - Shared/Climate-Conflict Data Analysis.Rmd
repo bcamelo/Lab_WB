@@ -22,8 +22,6 @@ library(sf) # used for spatial join
 
 # Importing subnational region data
 
-here() doesn't work for me because it refers to the main github repository instead of the subfolder "Conflict - Shared". I've removed it so I could run the code here, but we can definitely put it back in if it's a more standardized way to do relative filepaths.
-
 ```{r import-regions}
 # Load in a shapefile of the regions of Cote d'Ivoire from the GADM website
 # The commented code downloads the data from GADM and then imports it
@@ -47,9 +45,7 @@ ci_regions <- ci_regions %>%
 
 # Importing ACLED data on social disorder events
 
-st_join and st_interpolate_aw both produce the warning "although coordinates are longitude/latitude, [function] assumes they are planar". According to [this article](https://r-spatial.org/r/2020/06/17/s2.html), that is because older versions of the sf package implemented many operations as if coordinates referred to a flat grid where every degree longitude/latitude takes the same distance, instead of coordinates on a globe. It looks like installing the s2 package to use with sf might fix this problem, but since Cote d'Ivoire is a relatively small area close to the equator I'm not sure if the distortion is enough to make it worth the change... question for Andres?
-
-Also, I added some code to collapse the ACLED data into a region-month panel so it would be ready to merge with the climate data below.
+Question for Andres: st_join and st_interpolate_aw both produce the warning "although coordinates are longitude/latitude, [function] assumes they are planar". According to [this article](https://r-spatial.org/r/2020/06/17/s2.html), that is because older versions of the sf package implemented many operations as if coordinates referred to a flat grid where every degree longitude/latitude takes the same distance, instead of coordinates on a globe. It looks like installing the s2 package to use with sf might fix this problem, but since Cote d'Ivoire is a relatively small area close to the equator I'm not sure if the distortion is enough to make it worth the change...
 
 ```{r import-acled}
 # Read the ACLED datafile of all events within Cote d'Ivoire
@@ -77,7 +73,6 @@ acled_sf <- acled %>%
 acled_regions_sf <- ci_regions %>%
   dplyr::select(geometry, NAME_2, region_id) %>% 
   st_join(acled_sf) # default left join will keep only events within Cote d'Ivoire
-# note warning about planar geometry operation
 
 # Check accuracy of admin2 field
 # it looks like GADM is more accurate in its region names than ACLED
@@ -131,10 +126,6 @@ acled_panel <- acled_regions %>%
 
 # Importing ERA5 data from NetCDF file
 
-A couple questions:
-- in the function to convert from raster to sf data format, why do we need to re-do the st_as_sf(crs = 4326) line near the end?
-- running the function produces several warnings (I commented them at the bottom of the code block), do you know where they're coming from?
-
 ```{r import-era5}
 # Identify NetCDF filename
 ncname <- "adaptor.mars.internal-1618978096.60298-4541-17-222d58bf-b1bc-4bf4-8fe0-1d49582df00e.nc"
@@ -148,7 +139,7 @@ raster_to_sf <- function(rasterbrick) {
   
   # Transform the raster brick into a polygon file
   polygons_sf <- rasterbrick %>%
-    rasterToPolygons() %>%
+    rasterToPolygons() %>% # min/max warnings come from this step
     st_as_sf(crs = 4326)
   
   # Save the name of the raster brick
@@ -157,7 +148,8 @@ raster_to_sf <- function(rasterbrick) {
   # Tidy the polygon data
   clean_sf <- polygons_sf %>%
     # pivot months from wide to long
-    pivot_longer(
+    # replacement length warnings come from this step
+    pivot_longer( 
       -geometry,
       names_to = "date", 
       values_to = raster_name
@@ -169,7 +161,6 @@ raster_to_sf <- function(rasterbrick) {
     ) %>%
     # drop missing values from last few months of data (related to ERA5 versions)
     drop_na() %>%
-    # why does this need to be redone?
     st_as_sf(crs = 4326)
   
   # Return tidy polygon geometry
@@ -180,18 +171,9 @@ raster_to_sf <- function(rasterbrick) {
 # Use function to tidy temperature and precipitation data
 temp_sf <- raster_to_sf(temp)
 prcp_sf <- raster_to_sf(prcp)
-
-# where do the warnings come from?
-# no non-missing arguments to min; returning Inf
-# no non-missing arguments to max; returning -Inf
-# number of items to replace is not a multiple of replacement length
 ```
 
 # Aggregating gridded climate data to subnational regions
-
-I have checked that the region within the mutate function in the third stage of saving the dataframe to final is consistent with the assigned coordinates.
-
-Jess: Great! I added the region id as well just in case there is any confusion with the names. Also, I realized in checking the interpolation results (after I interrupted them because it was taking so long) that the way we had originally joined the region-ACLED data had created a really complicated geometry - I think instead of the 33 regions it was extra polygons for all the points. So I changed the interpolation code to just use the original region boundaries and it went a lot faster.
 
 ```{r climate-interpolation}
 # Set the dates parameter to loop over each year-month in the climate data
@@ -256,7 +238,6 @@ for(i in seq_along(dates)) {
       region_id = ci_regions$region_id
   )
   
-  
   # save each year-month of new precipitation data to the output list
   output_prcp[[i]] <- final
   
@@ -296,4 +277,7 @@ climate_conflict_region_month <- climate_conflict_merged %>%
   dplyr::select(region_id, region_name, date, everything()) %>% 
   mutate(across(events_count:fatalities_count, ~replace_na(., 0))) %>% 
   arrange(region_id, region_name, date)
+
+# Export full region-month panel dataset to CSV
+write_csv(climate_conflict_region_month, "climate-conflict_region-month_panel.csv")
 ```
