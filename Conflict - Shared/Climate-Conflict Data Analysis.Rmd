@@ -1,0 +1,299 @@
+---
+title: "Climate-Conflict Data Analysis"
+author: "Boseong Yun and Jessica Anderson"
+date: "4/25/2021"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Loading libraries
+library(tidymodels) 
+library(lubridate) 
+library(plm) # fixed effects package
+library(discrim) # Linear Discriminant Model
+library(tidyverse)
+library(here) # used for relative filepath
+library(raster) # used for importing shapefile
+library(ncdf4) # used for reading netCDF file
+library(sf) # used for spatial join
+```
+
+# Importing subnational region data
+
+here() doesn't work for me because it refers to the main github repository instead of the subfolder "Conflict - Shared". I've removed it so I could run the code here, but we can definitely put it back in if it's a more standardized way to do relative filepaths.
+
+```{r import-regions}
+# Load in a shapefile of the regions of Cote d'Ivoire from the GADM website
+# The commented code downloads the data from GADM and then imports it
+#ci_regions <- raster::getData('GADM', country = "CIV", level = 2) %>%
+#  st_as_sf(crs = 4326)
+# The code below imports an RDS file already downloaded from GADM
+ci_regions <- read_rds("gadm36_CIV_2_sp.rds") %>% 
+  st_as_sf(crs = 4326) # using WGS84 coordinate reference system for all data
+
+# Define new region id because existing GID_2 is not well formatted
+# for future reference, appears that GID_2 was based on alphabetizing by NAME_1 
+# and within that by NAME_2
+ci_regions <- ci_regions %>% 
+  mutate(
+    region_id = str_replace_all(GID_2, "^CIV\\.", ""), # drop country code
+    region_id = str_replace_all(region_id, "_1$", ""), # drop nonvarying characters
+    region_id = str_replace_all(region_id, "\\.", ""), # delete decimal point
+    region_id = as.integer(region_id) # convert from string to integer
+    )
+```
+
+# Importing ACLED data on social disorder events
+
+st_join and st_interpolate_aw both produce the warning "although coordinates are longitude/latitude, [function] assumes they are planar". According to [this article](https://r-spatial.org/r/2020/06/17/s2.html), that is because older versions of the sf package implemented many operations as if coordinates referred to a flat grid where every degree longitude/latitude takes the same distance, instead of coordinates on a globe. It looks like installing the s2 package to use with sf might fix this problem, but since Cote d'Ivoire is a relatively small area close to the equator I'm not sure if the distortion is enough to make it worth the change... question for Andres?
+
+Also, I added some code to collapse the ACLED data into a region-month panel so it would be ready to merge with the climate data below.
+
+```{r import-acled}
+# Read the ACLED datafile of all events within Cote d'Ivoire
+acled <- read_csv("ivory_coast.csv")
+
+# Clean ACLED data and transform into spatial data format
+acled_sf <- acled %>%
+  # remove 48 events for which geo-precision may be broader than our regions
+  filter(geo_precision != 3) %>%  
+  # prepare year-month coding to match climate data
+  mutate(
+    date = dmy(event_date),
+    month = month(date), 
+    yrmo = floor_date(date, unit = "month")
+  ) %>%
+  # select variables of interest
+  dplyr::select(
+    year, month, yrmo, admin2, latitude, longitude, 
+    event_type, sub_event_type, inter1, inter2, fatalities # inter1/2 = actor codes
+    ) %>%
+  # convert to simple features spatial data format
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326)
+
+# Add region IDs and names to ACLED data via spatial join
+acled_regions_sf <- ci_regions %>%
+  dplyr::select(geometry, NAME_2, region_id) %>% 
+  st_join(acled_sf) # default left join will keep only events within Cote d'Ivoire
+# note warning about planar geometry operation
+
+# Check accuracy of admin2 field
+# it looks like GADM is more accurate in its region names than ACLED
+# so we should collapse by region_id or NAME_2 when we aggregate
+acled_regions_sf %>% dplyr::select(-geometry) %>% count(admin2, NAME_2) %>% view()
+
+# Drop geometry because we no longer need it
+acled_regions <- st_drop_geometry(acled_regions_sf) %>% as_tibble()
+
+# Add indicator variables for event types and actors to facilitate aggregation
+acled_regions <- acled_regions %>% 
+  mutate(
+    battles = if_else(event_type == "Battles", 1, 0),
+    explosions = if_else(event_type == "Explosions/Remote violence", 1, 0),
+    protests = if_else(event_type == "Protests", 1, 0),
+    riots = if_else(event_type == "Riots", 1, 0),
+    strategic = if_else(event_type == "Strategic developments", 1, 0), 
+    violence_civ = if_else(event_type == "Violence against civilians", 1, 0), 
+    state_forces = if_else(inter1 == 1 | inter2 == 1, 1, 0), 
+    rebels = if_else(inter1 == 2 | inter2 == 2, 1, 0), 
+    pol_militias = if_else(inter1 == 3 | inter2 == 3, 1, 0), 
+    id_militias = if_else(inter1 == 4 | inter2 == 4, 1, 0), 
+    rioters = if_else(inter1 == 5 | inter2 == 5, 1, 0), 
+    protesters = if_else(inter1 == 6 | inter2 == 6, 1, 0), 
+    external = if_else(inter1 == 8 | inter2 == 8, 1, 0)
+  )
+
+# Collapse into region-month panel
+acled_panel <- acled_regions %>% 
+  group_by(NAME_2, yrmo) %>% 
+  summarise(
+    region_id = mean(region_id), # keep region id in aggregated data
+    events_count = n(), # count of all events (any type)
+    battles_count = sum(battles),
+    explosions_count = sum(explosions),
+    protests_count = sum(protests),
+    riots_count = sum(riots),
+    strategic_count = sum(strategic), 
+    violence_civ_count = sum(violence_civ), 
+    state_forces_count = sum(state_forces), 
+    rebels_count = sum(rebels), 
+    pol_militias_count = sum(pol_militias), 
+    id_militias_count = sum(id_militias), 
+    rioters_count = sum(rioters), 
+    protesters_count = sum(protesters), 
+    external_count = sum(external),
+    fatalities_count = sum(fatalities)
+  ) %>% 
+  ungroup()
+```
+
+# Importing ERA5 data from NetCDF file
+
+A couple questions:
+- in the function to convert from raster to sf data format, why do we need to re-do the st_as_sf(crs = 4326) line near the end?
+- running the function produces several warnings (I commented them at the bottom of the code block), do you know where they're coming from?
+
+```{r import-era5}
+# Identify NetCDF filename
+ncname <- "adaptor.mars.internal-1618978096.60298-4541-17-222d58bf-b1bc-4bf4-8fe0-1d49582df00e.nc"
+# Import 2-meter temperature (t2m) from ERA5 (expver = 1)
+temp <- brick(ncname, varname = "t2m", level = 1)
+# Import total participation (tp) from ERA5 (expver = 1)
+prcp <- brick(ncname, varname = "tp", level = 1)
+
+# Define a function to convert each raster brick into tidy polygon geometry
+raster_to_sf <- function(rasterbrick) {
+  
+  # Transform the raster brick into a polygon file
+  polygons_sf <- rasterbrick %>%
+    rasterToPolygons() %>%
+    st_as_sf(crs = 4326)
+  
+  # Save the name of the raster brick
+  raster_name <- as.character(substitute(rasterbrick))
+  
+  # Tidy the polygon data
+  clean_sf <- polygons_sf %>%
+    # pivot months from wide to long
+    pivot_longer(
+      -geometry,
+      names_to = "date", 
+      values_to = raster_name
+      ) %>%
+    # clean date format
+    mutate(
+      date = substr(date, 2, 11),
+      date = ymd(date)
+    ) %>%
+    # drop missing values from last few months of data (related to ERA5 versions)
+    drop_na() %>%
+    # why does this need to be redone?
+    st_as_sf(crs = 4326)
+  
+  # Return tidy polygon geometry
+  return(clean_sf)
+  
+}
+
+# Use function to tidy temperature and precipitation data
+temp_sf <- raster_to_sf(temp)
+prcp_sf <- raster_to_sf(prcp)
+
+# where do the warnings come from?
+# no non-missing arguments to min; returning Inf
+# no non-missing arguments to max; returning -Inf
+# number of items to replace is not a multiple of replacement length
+```
+
+# Aggregating gridded climate data to subnational regions
+
+I have checked that the region within the mutate function in the third stage of saving the dataframe to final is consistent with the assigned coordinates.
+
+Jess: Great! I added the region id as well just in case there is any confusion with the names. Also, I realized in checking the interpolation results (after I interrupted them because it was taking so long) that the way we had originally joined the region-ACLED data had created a really complicated geometry - I think instead of the 33 regions it was extra polygons for all the points. So I changed the interpolation code to just use the original region boundaries and it went a lot faster.
+
+```{r climate-interpolation}
+# Set the dates parameter to loop over each year-month in the climate data
+dates <- temp_sf %>% pull(date) %>% unique()
+
+# Temperature ---------------------------------------------------------
+
+# Create an output path for interpolated temperature data
+output_temp <- list() 
+
+# Loop over each year-month in the gridded temperature data
+for (i in seq_along(dates)) {
+  
+  # filter the data to each year-month
+  filtered <- temp_sf %>% filter(date == dates[i]) 
+  
+  # aggregate gridded temp to regions to get area-weighted average temp per region 
+  interpolated <- st_interpolate_aw(
+    filtered[, "temp"],
+    ci_regions, 
+    extensive = FALSE # average temp is spatially intensive (not a count)
+    )
+  
+  # to the new temperature variable, add appropriate date and regions
+  final <- interpolated %>% 
+    mutate(
+      date = ymd(dates[i]),
+      region_name = ci_regions$NAME_2,
+      region_id = ci_regions$region_id
+    )
+  
+  # save each year-month of new temperature data to the output list
+  output_temp[[i]] <- final
+  
+}
+
+# Bind the months of interpolated temperature data into a long spatial dataframe
+temp_interpolated <- bind_rows(output_temp)
+
+# Precipitation ---------------------------------------------------------
+
+# Create an output path for interpolated precipitation data
+output_prcp <- list() 
+
+# Loop over each year-month in the gridded precipitation data
+for(i in seq_along(dates)) {
+  
+  # filter the data to each year-month
+  filtered <- prcp_sf %>% filter(date == dates[i]) 
+  
+  # aggregate gridded prcp to regions to get area-weighted average prcp per region 
+  interpolated <- st_interpolate_aw(
+    filtered[, "prcp"],
+    ci_regions, 
+    extensive = FALSE) # average total precipitation is spatially intensive
+  
+  # to the new precipitation variable, add appropriate date and regions
+  final <- interpolated %>% 
+    mutate(
+      date = ymd(dates[i]),
+      region_name = ci_regions$NAME_2, 
+      region_id = ci_regions$region_id
+  )
+  
+  
+  # save each year-month of new precipitation data to the output list
+  output_prcp[[i]] <- final
+  
+}
+
+# Bind the months of interpolated precipitation data into a long spatial dataframe
+prcp_interpolated <- bind_rows(output_prcp)
+```
+
+# Merging interpolated climate data with conflict data by region
+
+```{r merge-climate-and-conflict}
+# Drop geometry from climate data and convert to more recognizable units
+temp_clean <- temp_interpolated %>% 
+  st_drop_geometry() %>% 
+  as_tibble() %>% 
+  rename(temp2m_k = temp) %>% 
+  mutate(temp2m_c = temp2m_k - 273.15) # Kelvin to Celsius
+prcp_clean <- prcp_interpolated %>% 
+  st_drop_geometry() %>% 
+  as_tibble() %>% 
+  rename(prcp_m = prcp) %>% 
+  mutate(prcp_mm = prcp_m * 1000) # meters to millimeters
+
+# Merge conflict, temperature, and precipitation data on region and year-month
+climate_conflict_merged <- temp_clean %>% 
+  left_join(
+    prcp_clean, 
+    by = c("region_id", "region_name", "date")) %>% 
+  left_join(
+    acled_panel, 
+    by = c("region_id" = "region_id", "region_name" = "NAME_2", "date" = "yrmo")
+    )
+
+# Replace missing ACLED counts with zeros and arrange data for readability
+climate_conflict_region_month <- climate_conflict_merged %>% 
+  dplyr::select(region_id, region_name, date, everything()) %>% 
+  mutate(across(events_count:fatalities_count, ~replace_na(., 0))) %>% 
+  arrange(region_id, region_name, date)
+```
