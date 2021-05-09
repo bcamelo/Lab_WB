@@ -1,3 +1,7 @@
 
 Conflict - Shared/.Rhistory
 *.csv
+*.pdf
+*.html
+Conflict - Shared/.DS_Store
+*.nc
