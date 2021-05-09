@@ -1,0 +1,118 @@
+---
+title: "climate-conflict analysis"
+author: "Jessica Anderson"
+date: "5/5/2021"
+output: pdf_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Loading libraries
+library(tidymodels) 
+library(lubridate) 
+library(fixest) # fixed effects package
+library(discrim) # Linear Discriminant Model
+library(tidyverse)
+library(here) # used for relative filepath
+library(raster) # used for importing shapefile
+library(ncdf4) # used for reading netCDF file
+library(sf) # used for spatial join
+library(rmarkdown)
+library(knitr)
+library(tinytex)
+library(stargazer)
+```
+
+# Preparing data for modeling
+
+```{r region-year}
+# read in region-month panel data
+region_month <- read_csv("climate-conflict_region-month_panel.csv")
+
+# extract temperature and precipitation mean and sd from first 3 years of data
+# in the future we'll use climate data from 1987 to 1996
+climate_baselines <- region_month %>% 
+  mutate(year = year(date)) %>% 
+  filter(dplyr::between(year, 1997, 1999)) %>% 
+  group_by(region_id) %>% 
+  summarise(
+    mean_temp2mc_baseline = mean(temp2m_c), 
+    mean_prcpmm_baseline = mean(prcp_mm), 
+    sd_temp2mc_baseline = sd(temp2m_c),
+    sd_prcpmm_baseline = sd(prcp_mm)
+  )
+
+# create standardized climate variables (standard deviational units from 1997 mean)
+region_month <- region_month %>% 
+  left_join(climate_baselines, by = "region_id") %>% 
+  mutate(
+    temp2m_c_std = (temp2m_c - mean_temp2mc_baseline) / sd_temp2mc_baseline, 
+    prcp_mm_std = (prcp_mm - mean_prcpmm_baseline) / sd_prcpmm_baseline
+  )
+
+# collapse to region-year panel
+region_year <- region_month %>% 
+  mutate(year = year(date)) %>% 
+  group_by(region_name, year) %>% 
+  summarise(
+    region_id = mean(region_id), # keep region id in aggregated data
+    temp2m_c = mean(temp2m_c),
+    prcp_mm = mean(prcp_mm),
+    temp2m_c_std = mean(temp2m_c_std),
+    prcp_mm_std = mean(prcp_mm_std),
+    events_count = sum(events_count), # count of all events (any type)
+    battles_count = sum(battles_count),
+    explosions_count = sum(explosions_count),
+    protests_count = sum(protests_count),
+    riots_count = sum(riots_count),
+    strategic_count = sum(strategic_count), 
+    violence_civ_count = sum(violence_civ_count), 
+    state_forces_count = sum(state_forces_count), 
+    rebels_count = sum(rebels_count), 
+    pol_militias_count = sum(pol_militias_count), 
+    id_militias_count = sum(id_militias_count), 
+    rioters_count = sum(rioters_count), 
+    protesters_count = sum(protesters_count), 
+    external_count = sum(external_count),
+    fatalities_count = sum(fatalities_count)
+  ) %>% 
+  ungroup() %>% 
+  dplyr::select(region_id, everything())
+```
+
+# Initial models
+
+```{r fixest-models}
+temp_unit_feols <- feols(
+  events_count ~ temp2m_c_std | region_id, # by default clusters SEs on region_id
+  data = region_year
+)
+prcp_unit_feols <- feols(
+  events_count ~ prcp_mm_std | region_id, # by default clusters SEs on region_id
+  data = region_year
+)
+both_unit_feols <- feols(
+  events_count ~ temp2m_c_std + prcp_mm_std | region_id, # clusters on region_id
+  data = region_year
+)
+both_twoway_feols <- feols(
+  events_count ~ temp2m_c_std + prcp_mm_std | region_id + year,
+  data = region_year,
+  cluster = ~region_id + year
+)
+
+midpoint_table <- etable(
+  both_unit_feols, both_twoway_feols, 
+  subtitles = c("Region FE", "Region & Year FE")
+  )
+midpoint_table %>% kable()
+```
+
+```{r latex, results='asis'}
+etable(
+  both_unit_feols, both_twoway_feols,
+  subtitles = c("Region FE", "Region & Year FE"), 
+  tex = TRUE
+)
+```

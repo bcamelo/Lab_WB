@@ -11,19 +11,21 @@ knitr::opts_chunk$set(echo = TRUE)
 # Loading libraries
 library(tidymodels) 
 library(lubridate) 
-library(plm) # fixed effects package
-library(fixest) # another fixed effects package with more intuitive standard errors
+library(fixest) # fixed effects package
 library(discrim) # Linear Discriminant Model
 library(tidyverse)
 library(here) # used for relative filepath
 library(raster) # used for importing shapefile
 library(ncdf4) # used for reading netCDF file
 library(sf) # used for spatial join
+library(knitr)
 ```
+
+Note that data cleaning chunks are set not to run.
 
 # Importing subnational region data
 
-```{r import-regions}
+```{r import-regions, eval=FALSE}
 # Load in a shapefile of the regions of Cote d'Ivoire from the GADM website
 # The commented code downloads the data from GADM and then imports it
 #ci_regions <- raster::getData('GADM', country = "CIV", level = 2) %>%
@@ -48,7 +50,7 @@ ci_regions <- ci_regions %>%
 
 Not concerned about st_join and st_intersect_aw using planar coordinates because the distortion is likely to be minimal for the scale of our analysis and how close Cote d'Ivoire is to the equator.
 
-```{r import-acled}
+```{r import-acled, eval=FALSE}
 # Read the ACLED datafile of all events within Cote d'Ivoire
 acled <- read_csv("ivory_coast.csv")
 
@@ -127,9 +129,9 @@ acled_panel <- acled_regions %>%
 
 # Importing ERA5 data from NetCDF file
 
-```{r import-era5}
+```{r import-era5, eval=FALSE}
 # Identify NetCDF filename
-ncname <- "adaptor.mars.internal-1618978096.60298-4541-17-222d58bf-b1bc-4bf4-8fe0-1d49582df00e.nc"
+ncname <- "adaptor.mars.internal-1620158239.42583-16445-1-4dc57c20-7f37-4338-9fa5-e85488b0dc1c.nc" # name of file with data starting 1987
 # Import 2-meter temperature (t2m) from ERA5 (expver = 1)
 temp <- brick(ncname, varname = "t2m", level = 1)
 # Import total participation (tp) from ERA5 (expver = 1)
@@ -160,6 +162,8 @@ raster_to_sf <- function(rasterbrick) {
       date = substr(date, 2, 11),
       date = ymd(date)
     ) %>%
+    # drop months preceding 1987
+    filter(year(date) >= 1987) %>% 
     # drop missing values from last few months of data (related to ERA5 versions)
     drop_na() %>%
     st_as_sf(crs = 4326)
@@ -176,7 +180,7 @@ prcp_sf <- raster_to_sf(prcp)
 
 # Aggregating gridded climate data to subnational regions
 
-```{r climate-interpolation}
+```{r climate-interpolation, eval=FALSE}
 # Set the dates parameter to loop over each year-month in the climate data
 dates <- temp_sf %>% pull(date) %>% unique()
 
@@ -250,7 +254,7 @@ prcp_interpolated <- bind_rows(output_prcp)
 
 # Merging interpolated climate data with conflict data by region
 
-```{r merge-climate-and-conflict}
+```{r merge-climate-and-conflict, eval=FALSE}
 # Drop geometry from climate data and convert to more recognizable units
 temp_clean <- temp_interpolated %>% 
   st_drop_geometry() %>% 
@@ -263,11 +267,17 @@ prcp_clean <- prcp_interpolated %>%
   rename(prcp_m = prcp) %>% 
   mutate(prcp_mm = prcp_m * 1000) # meters to millimeters
 
-# Merge conflict, temperature, and precipitation data on region and year-month
-climate_conflict_merged <- temp_clean %>% 
+# Merge temperature and precipitation data on region and year-month
+climate_1987to2021 <- temp_clean %>% 
   left_join(
     prcp_clean, 
-    by = c("region_id", "region_name", "date")) %>% 
+    by = c("region_id", "region_name", "date"))
+# Export full climate data to CSV for later use in calculating climate baselines
+write_csv(climate_1987to2021, "climate_1987to2021.csv")
+
+# Filter climate data to ACLED date range and merge with ACLED data
+climate_conflict_merged <- climate_1987to2021 %>% 
+  filter(year(date) >= 1997) %>% 
   left_join(
     acled_panel, 
     by = c("region_id" = "region_id", "region_name" = "NAME_2", "date" = "yrmo")
@@ -286,14 +296,14 @@ write_csv(climate_conflict_region_month, "climate-conflict_region-month_panel.cs
 # Preparing data for modeling
 
 ```{r region-year}
-# read in region-month panel data
+# read in region-month panel data and full climate data for baseline
 region_month <- read_csv("climate-conflict_region-month_panel.csv")
+climate_1987to2021 <- read_csv("climate_1987to2021.csv")
 
-# extract temperature and precipitation mean and sd from first 3 years of data
-# in the future we'll use climate data from 1987 to 1996
-climate_baselines <- region_month %>% 
+# extract temperature and precipitation mean and sd from 1987 to 1996 data
+climate_baselines <- climate_1987to2021 %>% 
   mutate(year = year(date)) %>% 
-  filter(dplyr::between(year, 1997, 1999)) %>% 
+  filter(dplyr::between(year, 1987, 1996)) %>% 
   group_by(region_id) %>% 
   summarise(
     mean_temp2mc_baseline = mean(temp2m_c), 
@@ -302,7 +312,7 @@ climate_baselines <- region_month %>%
     sd_prcpmm_baseline = sd(prcp_mm)
   )
 
-# create standardized climate variables (standard deviational units from 1997 mean)
+# create standardized climate variables (std deviational units from baseline mean)
 region_month <- region_month %>% 
   left_join(climate_baselines, by = "region_id") %>% 
   mutate(
@@ -342,48 +352,6 @@ region_year <- region_month %>%
 
 # Initial models
 
-```{r plm-models}
-# separate models with unit FE
-temp_unit <- plm(
-  formula = events_count ~ temp2m_c_std,
-  data = region_year,
-  effect = "individual", 
-  model = "within",
-  index = "region_id"
-)
-prcp_unit <- plm(
-  formula = events_count ~ prcp_mm_std,
-  data = region_year,
-  effect = "individual", 
-  model = "within", 
-  index = "region_id"
-)
-
-# combined model with unit FE
-both_unit <- plm(
-  formula = events_count ~ temp2m_c_std + prcp_mm_std,
-  data = region_year,
-  effect = "individual", 
-  model = "within", 
-  index = "region_id"
-)
-
-# combined model with unit and time FE
-both_twoway <- plm(
-  formula = events_count ~ temp2m_c_std + prcp_mm_std,
-  data = region_year,
-  effect = "twoways", 
-  model = "within", 
-  index = c("region_id", "year")
-)
-
-# model summaries
-summary(temp_unit)
-summary(prcp_unit)
-summary(both_unit)
-summary(both_twoway)
-```
-
 ```{r fixest-models}
 temp_unit_feols <- feols(
   events_count ~ temp2m_c_std | region_id, # by default clusters SEs on region_id
@@ -403,8 +371,8 @@ both_twoway_feols <- feols(
   cluster = ~region_id + year
 )
 
-summary(temp_unit_feols)
-summary(prcp_unit_feols)
-summary(both_unit_feols)
-summary(both_twoway_feols)
+etable(
+  both_unit_feols, both_twoway_feols, 
+  subtitles = c("Region FE", "Region & Year FE")
+  )
 ```
