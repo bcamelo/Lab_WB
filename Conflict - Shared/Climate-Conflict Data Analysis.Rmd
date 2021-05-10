@@ -25,7 +25,7 @@ Note that data cleaning chunks are set not to run.
 
 # Importing subnational region data
 
-```{r import-regions, eval=FALSE}
+```{r import-regions}
 # Load in a shapefile of the regions of Cote d'Ivoire from the GADM website
 # The commented code downloads the data from GADM and then imports it
 #ci_regions <- raster::getData('GADM', country = "CIV", level = 2) %>%
@@ -295,7 +295,7 @@ write_csv(climate_conflict_region_month, "climate-conflict_region-month_panel.cs
 
 # Preparing data for modeling
 
-```{r region-year}
+```{r prep-analysis}
 # read in region-month panel data and full climate data for baseline
 region_month <- read_csv("climate-conflict_region-month_panel.csv")
 climate_1987to2021 <- read_csv("climate_1987to2021.csv")
@@ -347,7 +347,173 @@ region_year <- region_month %>%
     fatalities_count = sum(fatalities_count)
   ) %>% 
   ungroup() %>% 
+  mutate(prcp_mm_std_abs = abs(prcp_mm_std), .after = prcp_mm_std) %>% 
   dplyr::select(region_id, everything())
+```
+
+# Descriptive analysis
+
+```{r descriptive-analysis}
+# collapse to country-year data
+country_year <- region_year %>% 
+  group_by(year) %>% 
+  summarise(
+    temp2m_c = mean(temp2m_c),
+    prcp_mm = mean(prcp_mm),
+    temp2m_c_std = mean(temp2m_c_std),
+    prcp_mm_std = mean(prcp_mm_std),
+    prcp_mm_std_abs = mean(prcp_mm_std_abs), # absolute value of normalized prcp
+    events_count = sum(events_count), # count of all events (any type)
+    battles_count = sum(battles_count),
+    explosions_count = sum(explosions_count),
+    protests_count = sum(protests_count),
+    riots_count = sum(riots_count),
+    strategic_count = sum(strategic_count), 
+    violence_civ_count = sum(violence_civ_count), 
+    state_forces_count = sum(state_forces_count), 
+    rebels_count = sum(rebels_count), 
+    pol_militias_count = sum(pol_militias_count), 
+    id_militias_count = sum(id_militias_count), 
+    rioters_count = sum(rioters_count), 
+    protesters_count = sum(protesters_count), 
+    external_count = sum(external_count),
+    fatalities_count = sum(fatalities_count)
+  ) %>% 
+  ungroup()
+
+# annual trends at national level in climate
+# temp more or less climbing
+# precip mostly below baseline mean but all over the place
+country_year %>% 
+  filter(year < 2021) %>% 
+  ggplot(aes(x = year)) +
+  geom_line(aes(y = temp2m_c_std), color = "red") +
+  geom_point(aes(y = temp2m_c_std), color = "red") +
+  geom_line(aes(y = prcp_mm_std), color = "blue") +
+  geom_point(aes(y = prcp_mm_std), color = "blue") +
+  geom_hline(aes(yintercept = 0)) +
+  scale_x_continuous(
+    name = "Year",
+    breaks = seq(1997, 2020, 1)
+    ) + 
+  ylab("Std Deviations from 1987-1996 Mean") +
+  ggtitle("Trends in Temperature (red) and Precipitation (blue)") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), 
+    panel.grid.minor = element_blank()
+    )
+
+# annual trends at national level in all ACLED events
+# visible peaks around 1st and 2nd civil wars, but also skyrocketing 2018-2020
+country_year %>% 
+  filter(year < 2021) %>% 
+  ggplot(aes(x = year)) + 
+  geom_line(aes(y = events_count)) + 
+  geom_point(aes(y = events_count)) +
+  scale_x_continuous(
+    name = "Year",
+    breaks = seq(1997, 2020, 1)
+    ) + 
+  ylab("Total Count of Events") +
+  ggtitle("Trends in ACLED Events") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), 
+    panel.grid.minor = element_blank()
+    )
+
+# annual trends at national level for ACLED event sub-types
+# violence against civilians and battles tend to move together
+# and dominate the event peaks for the 1st and 2nd civil wars
+# protests and riots tend to move together 
+# and drive the event peak in the last couple years
+# little happening in explosions
+country_year %>% 
+  dplyr::select(year, battles_count:violence_civ_count) %>% 
+  pivot_longer(
+    battles_count:violence_civ_count, 
+    names_to = "event_subtype", 
+    values_to = "subtype_count"
+  ) %>% 
+  mutate(event_subtype = str_replace_all(event_subtype, "_count$", "")) %>% 
+  filter(event_subtype != "strategic") %>% 
+  ggplot(aes(x = year, y = subtype_count, color = event_subtype)) +
+  geom_line() +
+  scale_color_brewer(
+    name = "Event Subtype", 
+    labels = c("Battles", "Explosions", "Protests", "Riots", "Violence against\ncivilians"), 
+    type = "qual", 
+    palette = "Dark2"
+  ) +
+  scale_x_continuous(
+    name = "Year",
+    breaks = seq(1997, 2020, 1)
+    ) + 
+  ylab("Count of Events") +
+  ggtitle("Trends in ACLED Events by Subtype") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), 
+    panel.grid.minor = element_blank(), 
+    panel.grid.major = element_line(size = .2), 
+    legend.position = "bottom"
+    )
+
+# seasonality of temp and precip at national level
+# cooler and rainer ~May-Oct, hotter and drier ~Nov-Apr
+region_month %>% 
+  mutate(month = month(date)) %>% 
+  group_by(month) %>% 
+  summarise(
+    temp2m_c = mean(temp2m_c), 
+    temp2m_c_std = mean(temp2m_c_std),
+    prcp_mm = mean(prcp_mm), 
+    prcp_mm_std = mean(prcp_mm_std)
+  ) %>% 
+  ungroup() %>% 
+  mutate(
+    month = factor(
+      month, 
+      levels = seq(1, 12, 1),
+      labels = c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", 
+                 "Oct", "Nov", "Dec")
+      )
+  ) %>% 
+  ggplot(aes(x = month, group = 1)) +
+  geom_line(aes(y = temp2m_c_std), color = "red") +
+  geom_point(aes(y = temp2m_c_std), color = "red") +
+  geom_line(aes(y = prcp_mm_std), color = "blue") +
+  geom_point(aes(y = prcp_mm_std), color = "blue") +
+  geom_hline(aes(yintercept = 0)) +
+  xlab("Month") + ylab("Std Deviations from Baseline Mean") + 
+  ggtitle("Seasonality in Temperature (red) and Precipitation (blue)") + 
+  theme_minimal()
+
+# average temp and precip by region
+region_mean_climate <- region_year %>% 
+  group_by(region_id) %>% 
+  summarise(temp2m_c = mean(temp2m_c), prcp_mm = mean(prcp_mm)) 
+region_mean_climate_sf <- ci_regions %>% 
+  left_join(region_mean_climate, by = "region_id")
+ggplot(region_mean_climate_sf) +
+  geom_sf(aes(fill = temp2m_c)) +
+  scale_fill_distiller(
+    name = "Average Temp (C)",
+    type = "seq", 
+    palette = "YlOrBr", 
+    direction = 1
+  ) +
+  theme_minimal()
+ggplot(region_mean_climate_sf) +
+  geom_sf(aes(fill = prcp_mm)) +
+  scale_fill_distiller(
+    name = "Average Daily\nPrecipitation (mm)",
+    type = "seq", 
+    palette = "Blues", 
+    direction = 1
+  ) +
+  theme_minimal()
 ```
 
 # Initial models
