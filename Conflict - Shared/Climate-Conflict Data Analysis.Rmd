@@ -403,6 +403,7 @@ country_year %>%
     axis.text.x = element_text(angle = 45, hjust = 1), 
     panel.grid.minor = element_blank()
     )
+ggsave("climatetrends_country-year.png")
 
 # annual trends at national level in all ACLED events
 # visible peaks around 1st and 2nd civil wars, but also skyrocketing 2018-2020
@@ -422,6 +423,7 @@ country_year %>%
     axis.text.x = element_text(angle = 45, hjust = 1), 
     panel.grid.minor = element_blank()
     )
+ggsave("acledtrends_country-year.png")
 
 # annual trends at national level for ACLED event sub-types
 # violence against civilians and battles tend to move together
@@ -437,7 +439,7 @@ country_year %>%
     values_to = "subtype_count"
   ) %>% 
   mutate(event_subtype = str_replace_all(event_subtype, "_count$", "")) %>% 
-  filter(event_subtype != "strategic") %>% 
+  filter(event_subtype != "strategic", year < 2021) %>% 
   ggplot(aes(x = year, y = subtype_count, color = event_subtype)) +
   geom_line() +
   scale_color_brewer(
@@ -459,6 +461,7 @@ country_year %>%
     panel.grid.major = element_line(size = .2), 
     legend.position = "bottom"
     )
+ggsave("acledsubtypetrends_country-year.png")
 
 # seasonality of temp and precip at national level
 # cooler and rainer ~May-Oct, hotter and drier ~Nov-Apr
@@ -489,6 +492,7 @@ region_month %>%
   xlab("Month") + ylab("Std Deviations from Baseline Mean") + 
   ggtitle("Seasonality in Temperature (red) and Precipitation (blue)") + 
   theme_minimal()
+ggsave("climateseasonality_country.png")
 
 # average temp and precip by region
 region_mean_climate <- region_year %>% 
@@ -505,6 +509,7 @@ ggplot(region_mean_climate_sf) +
     direction = 1
   ) +
   theme_minimal()
+ggsave("meantemp_region.png")
 ggplot(region_mean_climate_sf) +
   geom_sf(aes(fill = prcp_mm)) +
   scale_fill_distiller(
@@ -514,6 +519,69 @@ ggplot(region_mean_climate_sf) +
     direction = 1
   ) +
   theme_minimal()
+ggsave("meanprcp_region.png")
+
+# total ACLED events and subtypes by region
+region_events <- region_year %>% 
+  group_by(region_id) %>% 
+  summarise(
+    events_count = sum(events_count), # count of all events (any type)
+    battles_count = sum(battles_count),
+    explosions_count = sum(explosions_count),
+    protests_count = sum(protests_count),
+    riots_count = sum(riots_count),
+    strategic_count = sum(strategic_count), 
+    violence_civ_count = sum(violence_civ_count)
+  ) %>% 
+  rowwise() %>% 
+  mutate(
+    protests_riots_count = protests_count + riots_count, 
+    otherviolence_count = battles_count + explosions_count + violence_civ_count
+  ) %>% 
+  ungroup()
+region_events_sf <- ci_regions %>% 
+  left_join(region_events, by = "region_id")
+region_events_noabidjan <- region_events %>% 
+  filter(region_id != 11)
+region_events_noabidjan_sf <- ci_regions %>% 
+  left_join(region_events_noabidjan, by = "region_id")
+ggplot(data = region_events_noabidjan_sf) +
+  geom_sf(aes(fill = events_count)) +
+  scale_fill_distiller(
+    name = "ACLED Events,\n1997-2021", 
+    type = "seq", palette = "Reds", direction = 1
+    ) +
+  theme_minimal()
+ggsave("acledevents_regionmap.png")
+ggplot(data = region_events_noabidjan_sf) +
+  geom_sf(aes(fill = protests_riots_count)) +
+  scale_fill_distiller(
+    name = "Protests & Riots,\n1997-2021", 
+    type = "seq", palette = "Reds", direction = 1
+    ) +
+  theme_minimal()
+ggsave("protestsriots_regionmap.png")
+ggplot(data = region_events_noabidjan_sf) +
+  geom_sf(aes(fill = otherviolence_count)) +
+  scale_fill_distiller(
+    name = "Battles, Explosions,\nViolence Against\nCivilians, 1997-2021",
+    type = "seq", palette = "Reds", direction = 1
+    ) +
+  theme_minimal()
+ggsave("otherviolence_regionmap.png")
+ggplot(data = region_events_noabidjan_sf) +
+  geom_sf(aes(fill = battles_count)) +
+  scale_fill_distiller(type = "seq", palette = "Reds", direction = 1)
+ggplot(data = region_events_noabidjan_sf) +
+  geom_sf(aes(fill = explosions_count)) +
+  scale_fill_distiller(type = "seq", palette = "Reds", direction = 1)
+ggplot(data = region_events_noabidjan_sf) + 
+  geom_sf(aes(fill = violence_civ_count)) +
+  scale_fill_distiller(type = "seq", palette = "Reds", direction = 1)
+ggplot(data = region_events_noabidjan_sf) +
+  geom_sf(aes(fill = strategic_count)) +
+  scale_fill_distiller(type = "seq", palette = "Reds", direction = 1)
+
 ```
 
 # Initial models
