@@ -50,7 +50,7 @@ ci_regions <- ci_regions %>%
 
 Not concerned about st_join and st_intersect_aw using planar coordinates because the distortion is likely to be minimal for the scale of our analysis and how close Cote d'Ivoire is to the equator.
 
-```{r import-acled, eval=FALSE}
+```{r import-acled}
 # Read the ACLED datafile of all events within Cote d'Ivoire
 acled <- read_csv("ivory_coast.csv")
 
@@ -347,8 +347,17 @@ region_year <- region_month %>%
     fatalities_count = sum(fatalities_count)
   ) %>% 
   ungroup() %>% 
-  mutate(prcp_mm_std_abs = abs(prcp_mm_std), .after = prcp_mm_std) %>% 
   dplyr::select(region_id, everything())
+
+# add additional variables for analysis
+region_year <- region_year %>% 
+  mutate(prcp_mm_std_abs = abs(prcp_mm_std), .after = prcp_mm_std) %>% 
+  rowwise() %>% 
+  mutate(
+    protests_riots = protests_count + riots_count,
+    battles_explosions = battles_count + explosions_count
+  ) %>% 
+  ungroup()
 ```
 
 # Descriptive analysis
@@ -464,7 +473,7 @@ country_year %>%
 ggsave("acledsubtypetrends_country-year.png")
 
 # seasonality of temp and precip at national level
-# cooler and rainer ~May-Oct, hotter and drier ~Nov-Apr
+# cooler and rainier ~May-Oct, hotter and drier ~Nov-Apr
 region_month %>% 
   mutate(month = month(date)) %>% 
   group_by(month) %>% 
@@ -582,6 +591,201 @@ ggplot(data = region_events_noabidjan_sf) +
   geom_sf(aes(fill = strategic_count)) +
   scale_fill_distiller(type = "seq", palette = "Reds", direction = 1)
 
+# assigning regions to North and South
+north_districts <- c("Denguélé", "Savanes", "Zanzan", "Vallée du Bandama", 
+                     "Woroba")
+north_key <- ci_regions %>% 
+  st_drop_geometry() %>% 
+  as_tibble() %>% 
+  dplyr::select(GID_1, NAME_1, region_id, NAME_2) %>% 
+  mutate(
+    district_id = str_replace_all(GID_1, "^CIV\\.", ""), 
+    district_id = str_replace_all(district_id, "_1$", ""), 
+    district_id = as.integer(district_id)
+  ) %>% 
+  dplyr::select(district_id, NAME_1:NAME_2) %>% 
+  mutate(
+    north = if_else(NAME_1 %in% north_districts, 1, 0)
+  )
+north_year <- region_year %>% 
+  left_join(north_key %>% dplyr::select(region_id, north), by = "region_id") %>% 
+  group_by(north, year) %>% 
+  summarise(
+    temp2m_c = mean(temp2m_c),
+    prcp_mm = mean(prcp_mm),
+    temp2m_c_std = mean(temp2m_c_std),
+    prcp_mm_std = mean(prcp_mm_std),
+    prcp_mm_std_abs = mean(prcp_mm_std_abs), # absolute value of normalized prcp
+    events_count = sum(events_count), # count of all events (any type)
+    battles_count = sum(battles_count),
+    explosions_count = sum(explosions_count),
+    protests_count = sum(protests_count),
+    riots_count = sum(riots_count),
+    strategic_count = sum(strategic_count), 
+    violence_civ_count = sum(violence_civ_count), 
+    state_forces_count = sum(state_forces_count), 
+    rebels_count = sum(rebels_count), 
+    pol_militias_count = sum(pol_militias_count), 
+    id_militias_count = sum(id_militias_count), 
+    rioters_count = sum(rioters_count), 
+    protesters_count = sum(protesters_count), 
+    external_count = sum(external_count),
+    fatalities_count = sum(fatalities_count)
+  ) %>% 
+  ungroup()
+north_year_noabidjan <- region_year %>% 
+  left_join(north_key %>% dplyr::select(region_id, north), by = "region_id") %>% 
+  filter(region_id != 11) %>% 
+  group_by(north, year) %>% 
+  summarise(
+    temp2m_c = mean(temp2m_c),
+    prcp_mm = mean(prcp_mm),
+    temp2m_c_std = mean(temp2m_c_std),
+    prcp_mm_std = mean(prcp_mm_std),
+    prcp_mm_std_abs = mean(prcp_mm_std_abs), # absolute value of normalized prcp
+    events_count = sum(events_count), # count of all events (any type)
+    battles_count = sum(battles_count),
+    explosions_count = sum(explosions_count),
+    protests_count = sum(protests_count),
+    riots_count = sum(riots_count),
+    strategic_count = sum(strategic_count), 
+    violence_civ_count = sum(violence_civ_count), 
+    state_forces_count = sum(state_forces_count), 
+    rebels_count = sum(rebels_count), 
+    pol_militias_count = sum(pol_militias_count), 
+    id_militias_count = sum(id_militias_count), 
+    rioters_count = sum(rioters_count), 
+    protesters_count = sum(protesters_count), 
+    external_count = sum(external_count),
+    fatalities_count = sum(fatalities_count)
+  ) %>% 
+  ungroup()
+
+# ACLED events by north vs south
+north_year %>% 
+  filter(year < 2021) %>% 
+  ggplot(aes(x = year)) + 
+  geom_line(aes(y = events_count, group = north, color = factor(north))) +
+  geom_point(aes(y = events_count, group = north, color = factor(north))) +
+  scale_x_continuous(
+    name = "Year",
+    breaks = seq(1997, 2020, 1)
+    ) + 
+  scale_color_brewer(
+    type = "qual", 
+    palette = "Dark2", 
+    labels = c("South", "North")
+    ) +
+  ylab("Count of Events") +
+  ggtitle("Trends in ACLED Events by North vs South") +
+  theme_minimal() +
+  theme(
+    legend.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1), 
+    panel.grid.minor = element_blank()
+    )
+ggsave("acledevents_northsouth-year.png")
+north_year_noabidjan %>% 
+  filter(year < 2021) %>% 
+  ggplot(aes(x = year)) + 
+  geom_line(aes(y = events_count, group = north, color = factor(north))) +
+  geom_point(aes(y = events_count, group = north, color = factor(north))) +
+  scale_x_continuous(
+    name = "Year",
+    breaks = seq(1997, 2020, 1)
+    ) + 
+  scale_color_brewer(
+    type = "qual", 
+    palette = "Dark2", 
+    labels = c("South", "North")
+    ) +
+  ylab("Count of Events") +
+  labs (
+    title = "Trends in ACLED Events by North vs South", 
+    subtitle = "Excluding Abidjan"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1), 
+    panel.grid.minor = element_blank()
+    )
+ggsave("acledevents_northsouth-year_noabidjan.png")
+# where are these events in 2019-2020 happening?
+region_recentevents <- region_year %>% 
+  filter(between(year, 2018, 2021)) %>% 
+  group_by(region_id) %>% 
+  summarise(
+    events_count = sum(events_count), # count of all events (any type)
+    battles_count = sum(battles_count),
+    explosions_count = sum(explosions_count),
+    protests_count = sum(protests_count),
+    riots_count = sum(riots_count),
+    strategic_count = sum(strategic_count), 
+    violence_civ_count = sum(violence_civ_count)
+  ) %>% 
+  rowwise() %>% 
+  mutate(
+    protests_riots_count = protests_count + riots_count, 
+    otherviolence_count = battles_count + explosions_count + violence_civ_count
+  ) %>% 
+  ungroup()
+region_recentevents_sf <- ci_regions %>% 
+  left_join(region_recentevents, by = "region_id")
+region_recentevents_noabidjan <- region_recentevents %>% 
+  filter(region_id != 11)
+region_recentevents_noabidjan_sf <- ci_regions %>% 
+  left_join(region_recentevents_noabidjan, by = "region_id")
+ggplot(data = region_recentevents_noabidjan_sf) +
+  geom_sf(aes(fill = events_count)) +
+  labs(
+    title = "ACLED Events, 2018-2021", 
+    subtitle = "Excluding Abidjan"
+  ) +
+  scale_fill_distiller(name = "", type = "seq", palette = "Reds", direction = 1) +
+  theme_minimal()
+ggsave("acledeventsrecent_regionmap.png")
+ggplot(data = region_recentevents_noabidjan_sf) +
+  geom_sf(aes(fill = protests_riots_count)) +
+  labs(
+    title = "Protests & Riots, 2018-2021", 
+    subtitle = "Excluding Abidjan"
+  ) +
+  scale_fill_distiller(name = "", type = "seq", palette = "Reds", direction = 1) +
+  theme_minimal()
+ggsave("protestsriotsrecent_regionmap.png")
+ggplot(data = region_recentevents_noabidjan_sf) +
+  geom_sf(aes(fill = otherviolence_count)) +
+  labs(
+    title = "Battles, Explosions, Violence Against Civilians, 2018-2021", 
+    subtitle = "Excluding Abidjan"
+  ) +  
+  scale_fill_distiller(name = "", type = "seq", palette = "Reds", direction = 1) +
+  theme_minimal()
+ggsave("otherviolencerecent_regionmap.png")
+
+# does it make sense to group violence against civilians with anything else?
+# probably we should consider as its own category
+acled %>% 
+  filter(event_type == "Violence against civilians") %>% 
+  dplyr::select(notes, event_date, sub_event_type, actor1, assoc_actor_2, admin2) %>% 
+  mutate(event_date = dmy(event_date)) %>% 
+  view()
+acled %>% 
+  filter(event_type == "Violence against civilians") %>% 
+  mutate(
+    ethnic = str_detect(notes, "ethnic"), 
+    protestmention = str_detect(notes, "protest")
+    ) %>% 
+  count(protestmention)
+acled %>% 
+  mutate(
+    land = str_detect(notes, "land")
+  ) %>% 
+  filter(land == TRUE) %>% 
+  dplyr::select(notes, event_date, event_type, actor1, assoc_actor_2, admin2) %>% 
+  mutate(event_date = dmy(event_date)) %>% 
+  view()
 ```
 
 # Initial models
@@ -609,4 +813,63 @@ etable(
   both_unit_feols, both_twoway_feols, 
   subtitles = c("Region FE", "Region & Year FE")
   )
+```
+
+# Model extensions
+
+```{r model-extensions}
+# model protests/riots, battles/explosions, & violence against civilians separately
+protests_regionFE <- feols(
+  protests_riots ~ temp2m_c_std + prcp_mm_std | region_id,
+  data = region_year
+)
+battles_regionFE <- feols(
+  battles_explosions ~ temp2m_c_std + prcp_mm_std | region_id,
+  data = region_year
+)
+violciv_regionFE <- feols(
+  violence_civ_count ~ temp2m_c_std + prcp_mm_std | region_id,
+  data = region_year
+)
+protests_twowayFE <- feols(
+  protests_riots ~ temp2m_c_std + prcp_mm_std | region_id + year,
+  data = region_year,
+  cluster = ~region_id + year
+)
+battles_twowayFE <- feols(
+  battles_explosions ~ temp2m_c_std + prcp_mm_std | region_id + year,
+  data = region_year,
+  cluster = ~region_id + year
+)
+violciv_twowayFE <- feols(
+  violence_civ_count ~ temp2m_c_std + prcp_mm_std | region_id + year,
+  data = region_year,
+  cluster = ~region_id + year
+)
+
+etable(
+  protests_regionFE, protests_twowayFE,
+  battles_regionFE, battles_twowayFE,
+  violciv_regionFE, violciv_twowayFE
+)
+
+# model event types with region FE and year as linear regressor
+protests_yearcontrol_regionFE <- feols(
+  protests_riots ~ temp2m_c_std + prcp_mm_std + year | region_id,
+  data = region_year
+)
+battles_yearcontrol_regionFE <- feols(
+  battles_explosions ~ temp2m_c_std + prcp_mm_std + year | region_id,
+  data = region_year
+)
+violciv_yearcontrol_regionFE <- feols(
+  violence_civ_count ~ temp2m_c_std + prcp_mm_std + year | region_id,
+  data = region_year
+)
+
+etable(
+  protests_yearcontrol_regionFE, 
+  battles_yearcontrol_regionFE, 
+  violciv_yearcontrol_regionFE
+)
 ```

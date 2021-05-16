@@ -26,15 +26,15 @@ library(stargazer)
 
 # Preparing data for modeling
 
-```{r region-year}
-# read in region-month panel data
+```{r prep-analysis}
+# read in region-month panel data and full climate data for baseline
 region_month <- read_csv("climate-conflict_region-month_panel.csv")
+climate_1987to2021 <- read_csv("climate_1987to2021.csv")
 
-# extract temperature and precipitation mean and sd from first 3 years of data
-# in the future we'll use climate data from 1987 to 1996
-climate_baselines <- region_month %>% 
+# extract temperature and precipitation mean and sd from 1987 to 1996 data
+climate_baselines <- climate_1987to2021 %>% 
   mutate(year = year(date)) %>% 
-  filter(dplyr::between(year, 1997, 1999)) %>% 
+  filter(dplyr::between(year, 1987, 1996)) %>% 
   group_by(region_id) %>% 
   summarise(
     mean_temp2mc_baseline = mean(temp2m_c), 
@@ -43,7 +43,7 @@ climate_baselines <- region_month %>%
     sd_prcpmm_baseline = sd(prcp_mm)
   )
 
-# create standardized climate variables (standard deviational units from 1997 mean)
+# create standardized climate variables (std deviational units from baseline mean)
 region_month <- region_month %>% 
   left_join(climate_baselines, by = "region_id") %>% 
   mutate(
@@ -79,6 +79,16 @@ region_year <- region_month %>%
   ) %>% 
   ungroup() %>% 
   dplyr::select(region_id, everything())
+
+# add additional variables for analysis
+region_year <- region_year %>% 
+  mutate(prcp_mm_std_abs = abs(prcp_mm_std), .after = prcp_mm_std) %>% 
+  rowwise() %>% 
+  mutate(
+    protests_riots = protests_count + riots_count,
+    battles_explosions = battles_count + explosions_count
+  ) %>% 
+  ungroup()
 ```
 
 # Initial models
@@ -109,10 +119,84 @@ midpoint_table <- etable(
 midpoint_table %>% kable()
 ```
 
-```{r latex, results='asis'}
+```{r latex-midpoint, results='asis'}
 etable(
   both_unit_feols, both_twoway_feols,
   subtitles = c("Region FE", "Region & Year FE"), 
+  tex = TRUE
+)
+```
+
+# Model extensions
+
+```{r model-extensions}
+# model protests/riots, battles/explosions, & violence against civilians separately
+protests_regionFE <- feols(
+  protests_riots ~ temp2m_c_std + prcp_mm_std | region_id,
+  data = region_year
+)
+battles_regionFE <- feols(
+  battles_explosions ~ temp2m_c_std + prcp_mm_std | region_id,
+  data = region_year
+)
+violciv_regionFE <- feols(
+  violence_civ_count ~ temp2m_c_std + prcp_mm_std | region_id,
+  data = region_year
+)
+protests_twowayFE <- feols(
+  protests_riots ~ temp2m_c_std + prcp_mm_std | region_id + year,
+  data = region_year,
+  cluster = ~region_id + year
+)
+battles_twowayFE <- feols(
+  battles_explosions ~ temp2m_c_std + prcp_mm_std | region_id + year,
+  data = region_year,
+  cluster = ~region_id + year
+)
+violciv_twowayFE <- feols(
+  violence_civ_count ~ temp2m_c_std + prcp_mm_std | region_id + year,
+  data = region_year,
+  cluster = ~region_id + year
+)
+
+etable(
+  protests_regionFE, protests_twowayFE,
+  battles_regionFE, battles_twowayFE,
+  violciv_regionFE, violciv_twowayFE
+) %>% kable()
+
+# model event types with region FE and year as linear regressor
+protests_yearcontrol_regionFE <- feols(
+  protests_riots ~ temp2m_c_std + prcp_mm_std + year | region_id,
+  data = region_year
+)
+battles_yearcontrol_regionFE <- feols(
+  battles_explosions ~ temp2m_c_std + prcp_mm_std + year | region_id,
+  data = region_year
+)
+violciv_yearcontrol_regionFE <- feols(
+  violence_civ_count ~ temp2m_c_std + prcp_mm_std + year | region_id,
+  data = region_year
+)
+
+etable(
+  protests_yearcontrol_regionFE, 
+  battles_yearcontrol_regionFE, 
+  violciv_yearcontrol_regionFE
+) %>% kable()
+```
+
+```{r latex-extensions, results='asis'}
+etable(
+  protests_regionFE, protests_twowayFE, protests_yearcontrol_regionFE, 
+  tex = TRUE
+)
+etable(
+  battles_regionFE, battles_twowayFE, battles_yearcontrol_regionFE, 
+  tex = TRUE
+)
+etable(
+  violciv_regionFE, violciv_twowayFE, violciv_yearcontrol_regionFE, 
   tex = TRUE
 )
 ```
