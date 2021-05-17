@@ -2,7 +2,7 @@
 title: "Climate-Conflict Data Analysis"
 author: "Boseong Yun and Jessica Anderson"
 date: "4/25/2021"
-output: html_document
+output: html
 ---
 
 ```{r setup, include = FALSE}
@@ -19,13 +19,14 @@ library(raster) # used for importing shapefile
 library(ncdf4) # used for reading netCDF file
 library(sf) # used for spatial join
 library(knitr)
+library(readxl)
 ```
 
-Note that data cleaning chunks are set not to run.
+Note that ERA5 data cleaning chunks are set not to run.
 
 # Importing subnational region data
 
-```{r import-regions}
+```{r import-regions, echo = FALSE}
 # Load in a shapefile of the regions of Cote d'Ivoire from the GADM website
 # The commented code downloads the data from GADM and then imports it
 #ci_regions <- raster::getData('GADM', country = "CIV", level = 2) %>%
@@ -46,11 +47,61 @@ ci_regions <- ci_regions %>%
     )
 ```
 
+# Importing population data
+
+```{r population}
+# read in UNFPA population data from 2019
+pop_unfpa <- read_excel(
+  "civ_population_statistic_2019_unfpa.xlsx", 
+  sheet = "CIV_ADM1_POP"
+  )
+# clean and create standardized ids
+pop_unfpa <- pop_unfpa %>% 
+  dplyr::select(Region, ADM1_FR, Total) %>% 
+  filter(!str_detect(Region, "^#")) %>% # drop explanatory line
+  rename(
+    "district_name" = Region, 
+    "region_name" = ADM1_FR, 
+    "pop_unfpa_2019" = Total
+    ) %>% 
+  # sort to match GADM data and create comparable region ids
+  mutate(
+    district_name = str_replace_all(
+      district_name, 
+      "^District Autonome D'Abidjan$",
+      "Abidjan"
+      ),
+    district_name = str_replace_all(
+      district_name, 
+      "^District Autonome De Yamoussoukro$",
+      "Yamoussoukro"
+      )
+  ) %>% 
+  arrange(district_name, region_name) %>% 
+  group_by(district_name) %>% 
+  mutate(
+    district_id = cur_group_id(),
+    region_id = seq_along(district_id)
+    ) %>% 
+  ungroup %>% 
+  rowwise() %>% 
+  mutate(
+    region_id = 10*district_id + region_id
+  ) %>% 
+  ungroup() %>% 
+  dplyr::select(district_id, district_name, region_id, everything())
+
+# import gridded world population data
+# the 2020 estimates are similar enough to the 2019 UNFPA estimates that for now
+# I'm just going to use the UNFPA data
+pop_gwp <- read_csv("GWP population.csv")
+```
+
 # Importing ACLED data on social disorder events
 
 Not concerned about st_join and st_intersect_aw using planar coordinates because the distortion is likely to be minimal for the scale of our analysis and how close Cote d'Ivoire is to the equator.
 
-```{r import-acled}
+```{r import-acled, eval = FALSE}
 # Read the ACLED datafile of all events within Cote d'Ivoire
 acled <- read_csv("ivory_coast.csv")
 
@@ -254,7 +305,7 @@ prcp_interpolated <- bind_rows(output_prcp)
 
 # Merging interpolated climate data with conflict data by region
 
-```{r merge-climate-and-conflict, eval=FALSE}
+```{r merge-climate-and-conflict}
 # Drop geometry from climate data and convert to more recognizable units
 temp_clean <- temp_interpolated %>% 
   st_drop_geometry() %>% 
@@ -291,11 +342,19 @@ climate_conflict_region_month <- climate_conflict_merged %>%
 
 # Export full region-month panel dataset to CSV
 write_csv(climate_conflict_region_month, "climate-conflict_region-month_panel.csv")
+
+# Add population data and re-export
+region_month <- read_csv("climate-conflict_region-month_panel.csv")
+region_month <- region_month %>% 
+  left_join(
+    pop_unfpa %>% dplyr::select(region_id, pop_unfpa_2019), 
+    by = "region_id")
+write_csv(region_month, "climate-conflict_region-month_panel.csv")
 ```
 
 # Preparing data for modeling
 
-```{r prep-analysis}
+```{r prep-analysis, echo = FALSE}
 # read in region-month panel data and full climate data for baseline
 region_month <- read_csv("climate-conflict_region-month_panel.csv")
 climate_1987to2021 <- read_csv("climate_1987to2021.csv")
@@ -362,7 +421,7 @@ region_year <- region_year %>%
 
 # Descriptive analysis
 
-```{r descriptive-analysis}
+```{r descriptive-analysis, eval = FALSE}
 # collapse to country-year data
 country_year <- region_year %>% 
   group_by(year) %>% 
@@ -790,7 +849,7 @@ acled %>%
 
 # Initial models
 
-```{r fixest-models}
+```{r fixest-models, eval = FALSE}
 temp_unit_feols <- feols(
   events_count ~ temp2m_c_std | region_id, # by default clusters SEs on region_id
   data = region_year
@@ -819,57 +878,119 @@ etable(
 
 ```{r model-extensions}
 # model protests/riots, battles/explosions, & violence against civilians separately
-protests_regionFE <- feols(
-  protests_riots ~ temp2m_c_std + prcp_mm_std | region_id,
+separatedvs_regionFE <- feols(
+  c(protests_riots, battles_explosions, violence_civ_count) ~ 
+    temp2m_c_std + prcp_mm_std | region_id,
   data = region_year
 )
-battles_regionFE <- feols(
-  battles_explosions ~ temp2m_c_std + prcp_mm_std | region_id,
-  data = region_year
-)
-violciv_regionFE <- feols(
-  violence_civ_count ~ temp2m_c_std + prcp_mm_std | region_id,
-  data = region_year
-)
-protests_twowayFE <- feols(
-  protests_riots ~ temp2m_c_std + prcp_mm_std | region_id + year,
+separatedvs_twowayFE <- feols(
+  c(protests_riots, battles_explosions, violence_civ_count) ~ 
+    temp2m_c_std + prcp_mm_std | region_id + year,
   data = region_year,
   cluster = ~region_id + year
-)
-battles_twowayFE <- feols(
-  battles_explosions ~ temp2m_c_std + prcp_mm_std | region_id + year,
-  data = region_year,
-  cluster = ~region_id + year
-)
-violciv_twowayFE <- feols(
-  violence_civ_count ~ temp2m_c_std + prcp_mm_std | region_id + year,
-  data = region_year,
-  cluster = ~region_id + year
-)
-
-etable(
-  protests_regionFE, protests_twowayFE,
-  battles_regionFE, battles_twowayFE,
-  violciv_regionFE, violciv_twowayFE
 )
 
 # model event types with region FE and year as linear regressor
-protests_yearcontrol_regionFE <- feols(
-  protests_riots ~ temp2m_c_std + prcp_mm_std + year | region_id,
-  data = region_year
-)
-battles_yearcontrol_regionFE <- feols(
-  battles_explosions ~ temp2m_c_std + prcp_mm_std + year | region_id,
-  data = region_year
-)
-violciv_yearcontrol_regionFE <- feols(
-  violence_civ_count ~ temp2m_c_std + prcp_mm_std + year | region_id,
+separatedvs_yearcontrol <- feols(
+  c(protests_riots, battles_explosions, violence_civ_count) ~ 
+    temp2m_c_std + prcp_mm_std + year | region_id,
   data = region_year
 )
 
-etable(
-  protests_yearcontrol_regionFE, 
-  battles_yearcontrol_regionFE, 
-  violciv_yearcontrol_regionFE
+# model contemporaneous and one lag
+# drops the earliest year because no lag
+allevents_twowayFE_1to0 <- feols(
+  events_count ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year,
+  cluster = ~region_id + year
+) 
+protests_twowayFE_1to0 <- feols(
+  protests_riots ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year,
+  cluster = ~region_id + year
 )
+battles_twowayFE_1to0 <- feols(
+  battles_explosions ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year,
+  cluster = ~region_id + year
+)
+violciv_twowayFE_1to0 <- feols(
+  violence_civ_count ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year,
+  cluster = ~region_id + year
+)
+
+battles_twowayFE_clreg_1to0 <- feols(
+  battles_explosions ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year,
+  cluster = ~region_id
+)
+etable(battles_twowayFE_1to0, battles_twowayFE_clreg_1to0)
+feols(
+  battles_explosions ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year,
+  cluster = ~region_id
+)
+
+# test additional lags
+protests_twowayFE_3to0 <- feols(
+  protests_riots ~ l(temp2m_c_std, 0:3) + l(prcp_mm_std, 0:3) | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year,
+  cluster = ~region_id + year
+)
+battles_twowayFE_3to0 <- feols(
+  battles_explosions ~ l(temp2m_c_std, 0:3) + l(prcp_mm_std, 0:3) | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year,
+  cluster = ~region_id + year
+)
+violciv_twowayFE_3to0 <- feols(
+  violence_civ_count ~ l(temp2m_c_std, 0:3) + l(prcp_mm_std, 0:3) | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year,
+  cluster = ~region_id + year
+)
+
+# model contemporaneous + 1 lag with year regressor
+protests_yearcontrol_1to0 <- feols(
+  protests_riots ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) + year | 
+    region_id,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year,
+  cluster = ~region_id
+)
+battles_yearcontrol_1to0 <- feols(
+  battles_explosions ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) + year | 
+    region_id,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year,
+  cluster = ~region_id
+)
+violciv_yearcontrol_1to0 <- feols(
+  violence_civ_count ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) + year | 
+    region_id,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year,
+  cluster = ~region_id
+)
+
+coefplot(protests_twowayFE_1to0)
+coefplot(battles_twowayFE_1to0)
+coefplot(violciv_twowayFE_1to0)
 ```
+

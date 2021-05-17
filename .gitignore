@@ -6,3 +6,6 @@ Conflict - Shared/.Rhistory
 Conflict - Shared/.DS_Store
 *.nc
 *.png
+*.xlsx
+*.tex
+*.log
