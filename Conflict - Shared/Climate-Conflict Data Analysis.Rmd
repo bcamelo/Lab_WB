@@ -2,7 +2,9 @@
 title: "Climate-Conflict Data Analysis"
 author: "Boseong Yun and Jessica Anderson"
 date: "4/25/2021"
-output: html
+output: pdf_document
+header-includes: 
+- \usepackage{booktabs}
 ---
 
 ```{r setup, include = FALSE}
@@ -26,7 +28,7 @@ Note that ERA5 data cleaning chunks are set not to run.
 
 # Importing subnational region data
 
-```{r import-regions, echo = FALSE}
+```{r import-regions, eval = FALSE}
 # Load in a shapefile of the regions of Cote d'Ivoire from the GADM website
 # The commented code downloads the data from GADM and then imports it
 #ci_regions <- raster::getData('GADM', country = "CIV", level = 2) %>%
@@ -354,7 +356,7 @@ write_csv(region_month, "climate-conflict_region-month_panel.csv")
 
 # Preparing data for modeling
 
-```{r prep-analysis, echo = FALSE}
+```{r prep-analysis, eval = FALSE}
 # read in region-month panel data and full climate data for baseline
 region_month <- read_csv("climate-conflict_region-month_panel.csv")
 climate_1987to2021 <- read_csv("climate_1987to2021.csv")
@@ -445,20 +447,19 @@ region_year <- region_year %>%
     violciv_p1000 = violence_civ_count / pop_unfpa_2019 * 1000
   ) %>% 
   left_join(north_key %>% dplyr::select(region_id, north), by = "region_id")
-view(region_year)
 
 # export region-year panel dataset for later use
-write_csv(region_year, "climate-conflict_region-year_panel.csv")
+#write_csv(region_year, "climate-conflict_region-year_panel.csv")
 ```
 
-```{r region-year-import}
+```{r region-year-import, echo = FALSE}
 # read back in the region-year data
 region_year <- read_csv("climate-conflict_region-year_panel.csv")
 ```
 
 # Descriptive analysis
 
-```{r collapse-to-country-year}
+```{r collapse-to-country-year, eval=FALSE}
 country_year <- region_year %>% 
   group_by(year) %>% 
   summarise(
@@ -493,9 +494,12 @@ country_year <- region_year %>%
     battles_p1000 = battles_explosions / pop_unfpa_2019 * 1000, 
     violciv_p1000 = violence_civ_count / pop_unfpa_2019 * 1000
   )
+
+# export country-year panel data
+#write_csv(country_year, "climate-conflict_country-year_panel.csv")
 ```
 
-```{r climate-trends-country-year}
+```{r climate-trends-country-year, eval=FALSE}
 # annual trends at national level in climate
 # temp more or less climbing
 # precip mostly below baseline mean but all over the place
@@ -521,7 +525,7 @@ country_year %>%
 ggsave("climatetrends_country-year.png")
 ```
 
-```{r acled-trends-country-year}
+```{r acled-trends-country-year, eval=FALSE}
 # annual trends at national level in all ACLED events
 # visible peaks around 1st and 2nd civil wars, but also skyrocketing 2018-2020
 # note that per capita rates will follow the same trends because we have only 
@@ -545,7 +549,7 @@ country_year %>%
 ggsave("acledtrends_country-year.png")
 ```
 
-```{r acled-subtype-trends-country-year}
+```{r acled-subtype-trends-country-year, eval=FALSE}
 # annual trends at national level for ACLED event sub-types
 # violence against civilians and battles tend to move together
 # and dominate the event peaks for the 1st and 2nd civil wars
@@ -615,7 +619,7 @@ country_year %>%
     )
 ```
 
-```{r climate-seasonality-country-month}
+```{r climate-seasonality-country-month, eval=FALSE}
 # seasonality of temp and precip at national level
 # cooler and rainier ~May-Oct, hotter and drier ~Nov-Apr
 # note though that North and South have different seasonality
@@ -649,7 +653,7 @@ region_month %>%
 ggsave("climateseasonality_country.png")
 ```
 
-```{r climate-maps}
+```{r climate-maps, eval=FALSE}
 # average temp and precip by region
 region_mean_climate <- region_year %>% 
   group_by(region_id) %>% 
@@ -678,7 +682,7 @@ ggplot(region_mean_climate_sf) +
 ggsave("meanprcp_region.png")
 ```
 
-```{r acled-maps}
+```{r acled-maps, eval=FALSE}
 # total ACLED events and subtypes by region (counts and rates)
 
 # first summarize across years by region and join to geometry of region boundaries
@@ -813,7 +817,7 @@ region_year_sf %>%
 ggsave("acledevents_regionmapnoabidjan_allyears.png")
 ```
 
-```{r acled-trends-north-south}
+```{r acled-trends-north-south, eval=FALSE}
 north_year <- region_year %>% 
   group_by(north, year) %>% 
   summarise(
@@ -1026,7 +1030,7 @@ north_year %>%
 ggsave("acledsubtyperates_northsouth-year.png")
 ```
 
-```{r acled-map-recent-events}
+```{r acled-map-recent-events, eval=FALSE}
 # where are these events in 2019-2020 happening?
 region_recentevents <- region_year %>% 
   filter(between(year, 2018, 2021)) %>% 
@@ -1081,42 +1085,14 @@ ggplot(data = region_recentevents_noabidjan_sf) +
 ggsave("otherviolencerecent_regionmap.png")
 ```
 
-# Initial models
-
-```{r fixest-models}
-temp_unit_feols <- feols(
-  events_count ~ temp2m_c_std | region_id, # by default clusters SEs on region_id
-  data = region_year
-)
-prcp_unit_feols <- feols(
-  events_count ~ prcp_mm_std | region_id, # by default clusters SEs on region_id
-  data = region_year
-)
-both_unit_feols <- feols(
-  events_count ~ temp2m_c_std + prcp_mm_std | region_id, # clusters on region_id
-  data = region_year
-)
-both_twoway_feols <- feols(
-  events_count ~ temp2m_c_std + prcp_mm_std | region_id + year,
-  data = region_year,
-  cluster = ~region_id + year
-)
-
-etable(
-  both_unit_feols, both_twoway_feols, 
-  subtitles = c("Region FE", "Region & Year FE")
-  )
-```
-
-# Model extensions
+# Regression Analysis
 
 - Dependent variables: all ACLED events, protests & riots, battles & explosions, violence against civilians
   - counts and rates per 1000 people
 - Independent variables: temperature and precipitation
   - levels (degrees Celsius and millimeters per day), standard deviational units from 1987-1996 means, temperature in levels and precipitation in absolute standard deviational units
-- Fixed effects and similar: region only, region and year, region FE with year as a control variable
-  - region and year FE preferred
-- Lags: contemporaneous only, 0:1, 0:3
+- Fixed effects and similar: region only, **region and year**, region FE with year as a control variable
+- Lags: contemporaneous only, **0:1, 0:3**
 - Unweighted and weighted by 2019 region population
 - Full sample and split sample by North/South
 - All models cluster standard errors on region
@@ -1320,7 +1296,7 @@ absprcp_twoway_0to3_popw <- feols(
 )
 ```
 
-# Recap model parameters
+# Visualize regression estimates
 
 - Dependent variables: all ACLED events, protests & riots, battles & explosions, violence against civilians
   - counts and rates per 1000 people
@@ -1332,300 +1308,221 @@ absprcp_twoway_0to3_popw <- feols(
 - Unweighted and weighted by 2019 region population
 - Full sample and split sample by North/South
 - All models cluster standard errors on region
-- All models use 1997-2020 data, dropping 2021 because data is incomplete
+- All models use 1997-2020 data, dropping 2021 because data is incomplete 
 
-```{r visualize-estimates}
+
+```{r visualize-estimates, results='asis'}
+# DV counts vs rates, climate levels vs absolute precip, by event subtype
+etable(
+  levels_twoway_0to1_unw$`Full sample`$protests_riots, 
+  levels_twoway_0to1_unw$`Full sample`$protests_p1000, 
+  absprcp_twoway_0to1_unw$`Full sample`$protests_riots, 
+  absprcp_twoway_0to1_unw$`Full sample`$protests_p1000, 
+  tex = TRUE, 
+  title = "Protests and Riots", 
+  dict = c(
+    protests_riots = "Event Count", 
+    protests_p1000 = "Rate per 1000 People", 
+    temp2m_c = "Temperature in C", 
+    temp2m_c_l1 = "Temperature in C: 1-year lag", 
+    prcp_mm = "Rainfall in mm/day", 
+    prcp_mm_l1 = "Rainfall in mm/day: 1-year lag", 
+    prcp_mm_std_abs = "Rainfall deviation", 
+    prcp_mm_std_abs_l1 = "Rainfall deviation: 1-year lag", 
+    region_id = "Region", 
+    year = "Year"
+  )
+)
+etable(
+  levels_twoway_0to1_unw$`Full sample`$battles_explosions, 
+  levels_twoway_0to1_unw$`Full sample`$battles_p1000, 
+  absprcp_twoway_0to1_unw$`Full sample`$battles_explosions, 
+  absprcp_twoway_0to1_unw$`Full sample`$battles_p1000, 
+  tex = TRUE, 
+  title = "Battles and Explosions", 
+  dict = c(
+    battles_explosions = "Event Count", 
+    battles_p1000 = "Rate per 1000 People", 
+    temp2m_c = "Temperature in C", 
+    temp2m_c_l1 = "Temperature in C: 1-year lag", 
+    prcp_mm = "Rainfall in mm/day", 
+    prcp_mm_l1 = "Rainfall in mm/day: 1-year lag", 
+    prcp_mm_std_abs = "Rainfall deviation", 
+    prcp_mm_std_abs_l1 = "Rainfall deviation: 1-year lag", 
+    region_id = "Region", 
+    year = "Year"
+  )
+)
+etable(
+  levels_twoway_0to1_unw$`Full sample`$violence_civ_count, 
+  levels_twoway_0to1_unw$`Full sample`$violciv_p1000, 
+  absprcp_twoway_0to1_unw$`Full sample`$violence_civ_count, 
+  absprcp_twoway_0to1_unw$`Full sample`$violciv_p1000, 
+  tex = TRUE, 
+  title = "Violence Against Civilians", 
+  dict = c(
+    violence_civ_count = "Event Count", 
+    violciv_p1000 = "Rate per 1000 People", 
+    temp2m_c = "Temperature in C", 
+    temp2m_c_l1 = "Temperature in C: 1-year lag", 
+    prcp_mm = "Rainfall in mm/day", 
+    prcp_mm_l1 = "Rainfall in mm/day: 1-year lag", 
+    prcp_mm_std_abs = "Rainfall deviation", 
+    prcp_mm_std_abs_l1 = "Rainfall deviation: 1-year lag", 
+    region_id = "Region", 
+    year = "Year"
+  )
+)
+
+# full sample vs North vs South, by event subtype, using climate levels & both DVs
+etable(
+  levels_twoway_0to1_unw$`Full sample`$protests_riots, 
+  levels_twoway_0to1_unw$`0`$protests_riots, 
+  levels_twoway_0to1_unw$`1`$protests_riots, 
+  levels_twoway_0to1_unw$`Full sample`$protests_p1000, 
+  levels_twoway_0to1_unw$`0`$protests_p1000, 
+  levels_twoway_0to1_unw$`1`$protests_p1000, 
+  tex = TRUE, 
+  title = "Protests and Riots", 
+  subtitles = c("Full Sample", "South", "North", "Full Sample", "South", "North"), 
+  dict = c(
+    protests_riots = "Event Count", 
+    protests_p1000 = "Rate per 1000 People", 
+    temp2m_c = "Temperature in C", 
+    temp2m_c_l1 = "Temperature in C: 1-year lag", 
+    prcp_mm = "Rainfall in mm/day", 
+    prcp_mm_l1 = "Rainfall in mm/day: 1-year lag", 
+    region_id = "Region", 
+    year = "Year"
+  )
+)
+etable(
+  levels_twoway_0to1_unw$`Full sample`$battles_explosions, 
+  levels_twoway_0to1_unw$`0`$battles_explosions, 
+  levels_twoway_0to1_unw$`1`$battles_explosions, 
+  levels_twoway_0to1_unw$`Full sample`$battles_p1000, 
+  levels_twoway_0to1_unw$`0`$battles_p1000, 
+  levels_twoway_0to1_unw$`1`$battles_p1000, 
+  tex = TRUE, 
+  title = "Battles and Explosions", 
+  subtitles = c("Full Sample", "South", "North", "Full Sample", "South", "North"), 
+  dict = c(
+    battles_explosions = "Event Count", 
+    battles_p1000 = "Rate per 1000 People", 
+    temp2m_c = "Temperature in C", 
+    temp2m_c_l1 = "Temperature in C: 1-year lag", 
+    prcp_mm = "Rainfall in mm/day", 
+    prcp_mm_l1 = "Rainfall in mm/day: 1-year lag", 
+    region_id = "Region", 
+    year = "Year"
+  )
+)
+etable(
+  levels_twoway_0to1_unw$`Full sample`$violence_civ_count, 
+  levels_twoway_0to1_unw$`0`$violence_civ_count, 
+  levels_twoway_0to1_unw$`1`$violence_civ_count, 
+  levels_twoway_0to1_unw$`Full sample`$violciv_p1000, 
+  levels_twoway_0to1_unw$`0`$violciv_p1000, 
+  levels_twoway_0to1_unw$`1`$violciv_p1000, 
+  tex = TRUE, 
+  title = "Violence Against Civilians", 
+  subtitles = c("Full Sample", "South", "North", "Full Sample", "South", "North"), 
+  dict = c(
+    violence_civ_count = "Event Count", 
+    violciv_p1000 = "Rate per 1000 People", 
+    temp2m_c = "Temperature in C", 
+    temp2m_c_l1 = "Temperature in C: 1-year lag", 
+    prcp_mm = "Rainfall in mm/day", 
+    prcp_mm_l1 = "Rainfall in mm/day: 1-year lag", 
+    region_id = "Region", 
+    year = "Year"
+  )
+)
+
+# DV counts vs rates, climate levels vs absolute precip, by event subtype - 3 lags
+etable(
+  levels_twoway_0to3_unw$`Full sample`$protests_riots, 
+  levels_twoway_0to3_unw$`Full sample`$protests_p1000, 
+  absprcp_twoway_0to3_unw$`Full sample`$protests_riots, 
+  absprcp_twoway_0to3_unw$`Full sample`$protests_p1000, 
+  tex = TRUE, 
+  title = "Protests and Riots", 
+  dict = c(
+    protests_riots = "Event Count", 
+    protests_p1000 = "Rate per 1000 People", 
+    temp2m_c = "Temperature in C", 
+    temp2m_c_l1 = "Temperature in C: 1-year lag", 
+    temp2m_c_l2 = "Temperature in C: 2-year lag", 
+    temp2m_c_l3 = "Temperature in C: 3-year lag", 
+    prcp_mm = "Rainfall in mm/day", 
+    prcp_mm_l1 = "Rainfall in mm/day: 1-year lag", 
+    prcp_mm_l2 = "Rainfall in mm/day: 2-year lag", 
+    prcp_mm_l3 = "Rainfall in mm/day: 3-year lag", 
+    prcp_mm_std_abs = "Rainfall deviation", 
+    prcp_mm_std_abs_l1 = "Rainfall deviation: 1-year lag", 
+    prcp_mm_std_abs_l2 = "Rainfall deviation: 2-year lag", 
+    prcp_mm_std_abs_l3 = "Rainfall deviation: 3-year lag", 
+    region_id = "Region", 
+    year = "Year"
+  )
+)
+etable(
+  levels_twoway_0to3_unw$`Full sample`$battles_explosions, 
+  levels_twoway_0to3_unw$`Full sample`$battles_p1000, 
+  absprcp_twoway_0to3_unw$`Full sample`$battles_explosions, 
+  absprcp_twoway_0to3_unw$`Full sample`$battles_p1000, 
+  tex = TRUE, 
+  title = "Battles and Explosions", 
+  dict = c(
+    battles_explosions = "Event Count", 
+    battles_p1000 = "Rate per 1000 People", 
+    temp2m_c = "Temperature in C", 
+    temp2m_c_l1 = "Temperature in C: 1-year lag", 
+    temp2m_c_l2 = "Temperature in C: 2-year lag", 
+    temp2m_c_l3 = "Temperature in C: 3-year lag", 
+    prcp_mm = "Rainfall in mm/day", 
+    prcp_mm_l1 = "Rainfall in mm/day: 1-year lag", 
+    prcp_mm_l2 = "Rainfall in mm/day: 2-year lag", 
+    prcp_mm_l3 = "Rainfall in mm/day: 3-year lag", 
+    prcp_mm_std_abs = "Rainfall deviation", 
+    prcp_mm_std_abs_l1 = "Rainfall deviation: 1-year lag", 
+    prcp_mm_std_abs_l2 = "Rainfall deviation: 2-year lag", 
+    prcp_mm_std_abs_l3 = "Rainfall deviation: 3-year lag", 
+    region_id = "Region", 
+    year = "Year"
+  )
+)
+etable(
+  levels_twoway_0to3_unw$`Full sample`$violence_civ_count, 
+  levels_twoway_0to3_unw$`Full sample`$violciv_p1000, 
+  absprcp_twoway_0to3_unw$`Full sample`$violence_civ_count, 
+  absprcp_twoway_0to3_unw$`Full sample`$violciv_p1000, 
+  tex = TRUE, 
+  title = "Violence Against Civilians", 
+  dict = c(
+    violence_civ_count = "Event Count", 
+    violciv_p1000 = "Rate per 1000 People", 
+    temp2m_c = "Temperature in C", 
+    temp2m_c_l1 = "Temperature in C: 1-year lag", 
+    temp2m_c_l2 = "Temperature in C: 2-year lag", 
+    temp2m_c_l3 = "Temperature in C: 3-year lag", 
+    prcp_mm = "Rainfall in mm/day", 
+    prcp_mm_l1 = "Rainfall in mm/day: 1-year lag", 
+    prcp_mm_l2 = "Rainfall in mm/day: 2-year lag", 
+    prcp_mm_l3 = "Rainfall in mm/day: 3-year lag", 
+    prcp_mm_std_abs = "Rainfall deviation", 
+    prcp_mm_std_abs_l1 = "Rainfall deviation: 1-year lag", 
+    prcp_mm_std_abs_l2 = "Rainfall deviation: 2-year lag", 
+    prcp_mm_std_abs_l3 = "Rainfall deviation: 3-year lag", 
+    region_id = "Region", 
+    year = "Year"
+  )
+)
+
 etable(
   levels_twoway_0to1_unw$`Full sample`$events_count, 
   levels_twoway_0to1_unw$`Full sample`$events_p1000, 
-  levels_twoway_0to1_popw$`Full sample`$events_count, 
-  levels_twoway_0to1_popw$`Full sample`$events_p1000
+  absprcp_twoway_0to1_unw$`Full sample`$events_count, 
+  absprcp_twoway_0to1_unw$`Full sample`$events_p1000
 )
 ```
-
-```{r model-extensions}
-# model protests/riots, battles/explosions, & violence against civilians separately
-separatedvs_regionFE <- feols(
-  c(protests_riots, battles_explosions, violence_civ_count) ~ 
-    temp2m_c_std + prcp_mm_std | region_id,
-  data = region_year %>% filter(year < 2021)
-)
-separatedvs_twowayFE <- feols(
-  c(protests_riots, battles_explosions, violence_civ_count) ~ 
-    temp2m_c_std + prcp_mm_std | region_id + year,
-  data = region_year %>% filter(year < 2021)
-)
-separatedvs_yearcontrol <- feols(
-  c(protests_riots, battles_explosions, violence_civ_count) ~ 
-    temp2m_c_std + prcp_mm_std + year | region_id,
-  data = region_year %>% filter(year < 2021)
-)
-# same but with non-standardized temp & precip
-climlevels_regionFE <- feols(
-  c(protests_riots, battles_explosions, violence_civ_count) ~ temp2m_c + prcp_mm | 
-    region_id,
-  data = region_year %>% filter(year < 2021)
-)
-climlevels_twowayFE <- feols(
-  c(protests_riots, battles_explosions, violence_civ_count) ~ temp2m_c + prcp_mm | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021)
-)
-climlevels_yearcontrol <- feols(
-  c(protests_riots, battles_explosions, violence_civ_count) ~ 
-    temp2m_c + prcp_mm + year | region_id,
-  data = region_year %>% filter(year < 2021)
-)
-# same but with mean change temp & precip
-climmeanch_regionFE <- feols(
-  c(protests_riots, battles_explosions, violence_civ_count) ~ 
-    temp2m_c_meanchange + prcp_mm_meanchange | region_id,
-  data = region_year %>% filter(year < 2021)
-)
-climmeanch_twowayFE <- feols(
-  c(protests_riots, battles_explosions, violence_civ_count) ~ 
-    temp2m_c_meanchange + prcp_mm_meanchange | region_id + year,
-  data = region_year %>% filter(year < 2021)
-)
-climmeanch_yearcontrol <- feols(
-  c(protests_riots, battles_explosions, violence_civ_count) ~ 
-    temp2m_c_meanchange + prcp_mm_meanchange + year | region_id,
-  data = region_year %>% filter(year < 2021)
-)
-# same but with temp in levels and precip in absolute deviations
-absprcp_regionFE <- feols(
-  c(protests_riots, battles_explosions, violence_civ_count) ~ 
-    temp2m_c + prcp_mm_std_abs | region_id,
-  data = region_year %>% filter(year < 2021)
-)
-absprcp_twowayFE <- feols(
-  c(protests_riots, battles_explosions, violence_civ_count) ~ 
-    temp2m_c + prcp_mm_std_abs | region_id + year,
-  data = region_year %>% filter(year < 2021)
-)
-absprcp_yearcontrol <- feols(
-  c(protests_riots, battles_explosions, violence_civ_count) ~ 
-    temp2m_c + prcp_mm_std_abs + year | region_id,
-  data = region_year %>% filter(year < 2021)
-)
-
-# model contemporaneous and one lag
-# drops the earliest year because no lag
-allevents_twowayFE_1to0 <- feols(
-  events_count ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-) 
-protests_twowayFE_1to0 <- feols(
-  protests_riots ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-battles_twowayFE_1to0 <- feols(
-  battles_explosions ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-violciv_twowayFE_1to0 <- feols(
-  violence_civ_count ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-# same but with non-standardized temp and precip
-allevents_climlevels_twowayFE_1to0 <- feols(
-  events_count ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-) 
-protests_climlevels_twowayFE_1to0 <- feols(
-  protests_riots ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-battles_climlevels_twowayFE_1to0 <- feols(
-  battles_explosions ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-violciv_climlevels_twowayFE_1to0 <- feols(
-  violence_civ_count ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-# same but with mean change temp and precip
-allevents_climmeanch_twowayFE_1to0 <- feols(
-  events_count ~ l(temp2m_c_meanchange, 0:1) + l(prcp_mm_meanchange, 0:1) | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-) 
-protests_climmeanch_twowayFE_1to0 <- feols(
-  protests_riots ~ l(temp2m_c_meanchange, 0:1) + l(prcp_mm_meanchange, 0:1) | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-battles_climmeanch_twowayFE_1to0 <- feols(
-  battles_explosions ~ l(temp2m_c_meanchange, 0:1) + l(prcp_mm_meanchange, 0:1) | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-violciv_climmeanch_twowayFE_1to0 <- feols(
-  violence_civ_count ~ l(temp2m_c_meanchange, 0:1) + l(prcp_mm_meanchange, 0:1) | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-# same but with temp in levels and precip in absolute deviations
-allevents_absprcp_twowayFE_1to0 <- feols(
-  events_count ~ l(temp2m_c, 0:1) + l(prcp_mm_std_abs, 0:1) | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-) 
-protests_absprcp_twowayFE_1to0 <- feols(
-  protests_riots ~ l(temp2m_c, 0:1) + l(prcp_mm_std_abs, 0:1) | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-battles_absprcp_twowayFE_1to0 <- feols(
-  battles_explosions ~ l(temp2m_c, 0:1) + l(prcp_mm_std_abs, 0:1) | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-violciv_absprcp_twowayFE_1to0 <- feols(
-  violence_civ_count ~ l(temp2m_c, 0:1) + l(prcp_mm_std_abs, 0:1) | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-
-# test additional lags
-protests_twowayFE_3to0 <- feols(
-  protests_riots ~ l(temp2m_c_std, 0:3) + l(prcp_mm_std, 0:3) | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-battles_twowayFE_3to0 <- feols(
-  battles_explosions ~ l(temp2m_c_std, 0:3) + l(prcp_mm_std, 0:3) | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-violciv_twowayFE_3to0 <- feols(
-  violence_civ_count ~ l(temp2m_c_std, 0:3) + l(prcp_mm_std, 0:3) | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-
-# model contemporaneous + 1 lag with year regressor
-protests_yearcontrol_1to0 <- feols(
-  protests_riots ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) + year | 
-    region_id,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year,
-  cluster = ~region_id
-)
-battles_yearcontrol_1to0 <- feols(
-  battles_explosions ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) + year | 
-    region_id,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year,
-  cluster = ~region_id
-)
-violciv_yearcontrol_1to0 <- feols(
-  violence_civ_count ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) + year | 
-    region_id,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year,
-  cluster = ~region_id
-)
-
-protests_lags_compareclimvars <- etable(
-  protests_twowayFE_1to0, protests_climlevels_twowayFE_1to0, 
-  protests_climmeanch_twowayFE_1to0, protests_absprcp_twowayFE_1to0
-)
-battles_lags_compareclimvars <- etable(
-  battles_twowayFE_1to0, battles_climlevels_twowayFE_1to0, 
-  battles_climmeanch_twowayFE_1to0, battles_absprcp_twowayFE_1to0
-)
-violciv_lags_compareclimvars <- etable(
-  violciv_twowayFE_1to0, violciv_climlevels_twowayFE_1to0, 
-  violciv_climmeanch_twowayFE_1to0, violciv_absprcp_twowayFE_1to0
-)
-view(protests_lags_compareclimvars)
-view(battles_lags_compareclimvars)
-view(violciv_lags_compareclimvars)
-
-# model contemporaneous and one lag - population-normalized DVs
-# drops the earliest year because no lag
-alleventsp1000_twowayFE_1to0 <- feols(
-  events_p1000 ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-) 
-protestsp1000_twowayFE_1to0 <- feols(
-  protests_p1000 ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-battlesp1000_twowayFE_1to0 <- feols(
-  battles_p1000 ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-violcivp1000_twowayFE_1to0 <- feols(
-  violciv_p1000 ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | 
-    region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-# same but with non-standardized temp and precip
-alleventsp1000_climlevels_twowayFE_1to0 <- feols(
-  events_p1000 ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-) 
-protestsp1000_climlevels_twowayFE_1to0 <- feols(
-  protests_p1000 ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-battlesp1000_climlevels_twowayFE_1to0 <- feols(
-  battles_p1000 ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-violcivp1000_climlevels_twowayFE_1to0 <- feols(
-  violciv_p1000 ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | region_id + year,
-  data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year
-)
-
-protests_lags_comparedvs <- etable(
-  protests_twowayFE_1to0, protestsp1000_twowayFE_1to0, 
-  protests_climlevels_twowayFE_1to0, protestsp1000_climlevels_twowayFE_1to0
-)
-battles_lags_comparedvs <- etable(
-  battles_twowayFE_1to0, battlesp1000_twowayFE_1to0, 
-  battles_climlevels_twowayFE_1to0, battlesp1000_climlevels_twowayFE_1to0
-)
-violciv_lags_comparedvs <- etable(
-  violciv_twowayFE_1to0, violcivp1000_twowayFE_1to0, 
-  violciv_climlevels_twowayFE_1to0, violcivp1000_climlevels_twowayFE_1to0
-)
-view(protests_lags_comparedvs)
-view(battles_lags_comparedvs)
-view(violciv_lags_comparedvs)
-```
-
