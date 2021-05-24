@@ -49,7 +49,7 @@ ci_regions <- ci_regions %>%
 
 # Importing population data
 
-```{r population}
+```{r population, eval = FALSE}
 # read in UNFPA population data from 2019
 pop_unfpa <- read_excel(
   "civ_population_statistic_2019_unfpa.xlsx", 
@@ -305,7 +305,7 @@ prcp_interpolated <- bind_rows(output_prcp)
 
 # Merging interpolated climate data with conflict data by region
 
-```{r merge-climate-and-conflict}
+```{r merge-climate-and-conflict, eval = FALSE}
 # Drop geometry from climate data and convert to more recognizable units
 temp_clean <- temp_interpolated %>% 
   st_drop_geometry() %>% 
@@ -372,11 +372,14 @@ climate_baselines <- climate_1987to2021 %>%
   )
 
 # create standardized climate variables (std deviational units from baseline mean)
+# also create mean change climate variables
 region_month <- region_month %>% 
   left_join(climate_baselines, by = "region_id") %>% 
   mutate(
     temp2m_c_std = (temp2m_c - mean_temp2mc_baseline) / sd_temp2mc_baseline, 
-    prcp_mm_std = (prcp_mm - mean_prcpmm_baseline) / sd_prcpmm_baseline
+    prcp_mm_std = (prcp_mm - mean_prcpmm_baseline) / sd_prcpmm_baseline, 
+    temp2m_c_meanchange = temp2m_c - mean_temp2mc_baseline, 
+    prcp_mm_meanchange = prcp_mm - mean_prcpmm_baseline
   )
 
 # collapse to region-year panel
@@ -389,6 +392,8 @@ region_year <- region_month %>%
     prcp_mm = mean(prcp_mm),
     temp2m_c_std = mean(temp2m_c_std),
     prcp_mm_std = mean(prcp_mm_std),
+    temp2m_c_meanchange = mean(temp2m_c_meanchange), 
+    prcp_mm_meanchange = mean(prcp_mm_meanchange),
     events_count = sum(events_count), # count of all events (any type)
     battles_count = sum(battles_count),
     explosions_count = sum(explosions_count),
@@ -403,12 +408,28 @@ region_year <- region_month %>%
     rioters_count = sum(rioters_count), 
     protesters_count = sum(protesters_count), 
     external_count = sum(external_count),
-    fatalities_count = sum(fatalities_count)
+    fatalities_count = sum(fatalities_count), 
+    pop_unfpa_2019 = mean(pop_unfpa_2019) # keep non-varying region population
   ) %>% 
   ungroup() %>% 
   dplyr::select(region_id, everything())
 
 # add additional variables for analysis
+north_districts <- c("Denguélé", "Savanes", "Zanzan", "Vallée du Bandama", 
+                     "Woroba")
+north_key <- ci_regions %>% 
+  st_drop_geometry() %>% 
+  as_tibble() %>% 
+  dplyr::select(GID_1, NAME_1, region_id, NAME_2) %>% 
+  mutate(
+    district_id = str_replace_all(GID_1, "^CIV\\.", ""), 
+    district_id = str_replace_all(district_id, "_1$", ""), 
+    district_id = as.integer(district_id)
+  ) %>% 
+  dplyr::select(district_id, NAME_1:NAME_2) %>% 
+  mutate(
+    north = if_else(NAME_1 %in% north_districts, 1, 0)
+  )
 region_year <- region_year %>% 
   mutate(prcp_mm_std_abs = abs(prcp_mm_std), .after = prcp_mm_std) %>% 
   rowwise() %>% 
@@ -416,13 +437,28 @@ region_year <- region_year %>%
     protests_riots = protests_count + riots_count,
     battles_explosions = battles_count + explosions_count
   ) %>% 
-  ungroup()
+  ungroup() %>% 
+  mutate(
+    events_p1000 = events_count / pop_unfpa_2019 * 1000, 
+    protests_p1000 = protests_riots / pop_unfpa_2019 * 1000, 
+    battles_p1000 = battles_explosions / pop_unfpa_2019 * 1000, 
+    violciv_p1000 = violence_civ_count / pop_unfpa_2019 * 1000
+  ) %>% 
+  left_join(north_key %>% dplyr::select(region_id, north), by = "region_id")
+view(region_year)
+
+# export region-year panel dataset for later use
+write_csv(region_year, "climate-conflict_region-year_panel.csv")
+```
+
+```{r region-year-import}
+# read back in the region-year data
+region_year <- read_csv("climate-conflict_region-year_panel.csv")
 ```
 
 # Descriptive analysis
 
-```{r descriptive-analysis, eval = FALSE}
-# collapse to country-year data
+```{r collapse-to-country-year}
 country_year <- region_year %>% 
   group_by(year) %>% 
   summarise(
@@ -445,10 +481,21 @@ country_year <- region_year %>%
     rioters_count = sum(rioters_count), 
     protesters_count = sum(protesters_count), 
     external_count = sum(external_count),
-    fatalities_count = sum(fatalities_count)
+    fatalities_count = sum(fatalities_count), 
+    protests_riots = sum(protests_riots), 
+    battles_explosions = sum(battles_explosions),
+    pop_unfpa_2019 = sum(pop_unfpa_2019)
   ) %>% 
-  ungroup()
+  ungroup() %>% 
+  mutate(
+    events_p1000 = events_count / pop_unfpa_2019 * 1000, 
+    protests_p1000 = protests_riots / pop_unfpa_2019 * 1000, 
+    battles_p1000 = battles_explosions / pop_unfpa_2019 * 1000, 
+    violciv_p1000 = violence_civ_count / pop_unfpa_2019 * 1000
+  )
+```
 
+```{r climate-trends-country-year}
 # annual trends at national level in climate
 # temp more or less climbing
 # precip mostly below baseline mean but all over the place
@@ -472,9 +519,13 @@ country_year %>%
     panel.grid.minor = element_blank()
     )
 ggsave("climatetrends_country-year.png")
+```
 
+```{r acled-trends-country-year}
 # annual trends at national level in all ACLED events
 # visible peaks around 1st and 2nd civil wars, but also skyrocketing 2018-2020
+# note that per capita rates will follow the same trends because we have only 
+# one year of population data
 country_year %>% 
   filter(year < 2021) %>% 
   ggplot(aes(x = year)) + 
@@ -492,7 +543,9 @@ country_year %>%
     panel.grid.minor = element_blank()
     )
 ggsave("acledtrends_country-year.png")
+```
 
+```{r acled-subtype-trends-country-year}
 # annual trends at national level for ACLED event sub-types
 # violence against civilians and battles tend to move together
 # and dominate the event peaks for the 1st and 2nd civil wars
@@ -529,10 +582,43 @@ country_year %>%
     panel.grid.major = element_line(size = .2), 
     legend.position = "bottom"
     )
-ggsave("acledsubtypetrends_country-year.png")
+#ggsave("acledsubtypetrends_country-year.png")
+country_year %>% 
+  dplyr::select(year, protests_p1000:violciv_p1000) %>% 
+  pivot_longer(
+    protests_p1000:violciv_p1000, 
+    names_to = "event_subtype", 
+    values_to = "subtype_rate"
+  ) %>% 
+  mutate(event_subtype = str_replace_all(event_subtype, "_rate$", "")) %>% 
+  filter(event_subtype != "strategic", year < 2021) %>% 
+  ggplot(aes(x = year, y = subtype_rate, color = event_subtype)) +
+  geom_line() +
+  scale_color_brewer(
+    name = "Event Subtype", 
+    labels = c("Battles and\nexplosions", "Protests\nand riots", "Violence against\ncivilians"), 
+    type = "qual", 
+    palette = "Dark2"
+  ) +
+  scale_x_continuous(
+    name = "Year",
+    breaks = seq(1997, 2020, 1)
+    ) + 
+  ylab("Events per 1000 People") +
+  ggtitle("Trends in ACLED Event Rates by Subtype") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), 
+    panel.grid.minor = element_blank(), 
+    panel.grid.major = element_line(size = .2), 
+    legend.position = "bottom"
+    )
+```
 
+```{r climate-seasonality-country-month}
 # seasonality of temp and precip at national level
 # cooler and rainier ~May-Oct, hotter and drier ~Nov-Apr
+# note though that North and South have different seasonality
 region_month %>% 
   mutate(month = month(date)) %>% 
   group_by(month) %>% 
@@ -561,7 +647,9 @@ region_month %>%
   ggtitle("Seasonality in Temperature (red) and Precipitation (blue)") + 
   theme_minimal()
 ggsave("climateseasonality_country.png")
+```
 
+```{r climate-maps}
 # average temp and precip by region
 region_mean_climate <- region_year %>% 
   group_by(region_id) %>% 
@@ -588,8 +676,12 @@ ggplot(region_mean_climate_sf) +
   ) +
   theme_minimal()
 ggsave("meanprcp_region.png")
+```
 
-# total ACLED events and subtypes by region
+```{r acled-maps}
+# total ACLED events and subtypes by region (counts and rates)
+
+# first summarize across years by region and join to geometry of region boundaries
 region_events <- region_year %>% 
   group_by(region_id) %>% 
   summarise(
@@ -599,75 +691,130 @@ region_events <- region_year %>%
     protests_count = sum(protests_count),
     riots_count = sum(riots_count),
     strategic_count = sum(strategic_count), 
-    violence_civ_count = sum(violence_civ_count)
+    violence_civ_count = sum(violence_civ_count), 
+    protests_riots = sum(protests_riots), 
+    battles_explosions = sum(battles_explosions), 
+    pop_unfpa_2019 = mean(pop_unfpa_2019) # constant for each region
   ) %>% 
-  rowwise() %>% 
+  ungroup() %>% 
   mutate(
-    protests_riots_count = protests_count + riots_count, 
-    otherviolence_count = battles_count + explosions_count + violence_civ_count
-  ) %>% 
-  ungroup()
+    events_p1000 = events_count / pop_unfpa_2019 * 1000, 
+    protests_p1000 = protests_riots / pop_unfpa_2019 * 1000, 
+    battles_p1000 = battles_explosions / pop_unfpa_2019 * 1000, 
+    violciv_p1000 = violence_civ_count / pop_unfpa_2019 * 1000
+  )
 region_events_sf <- ci_regions %>% 
   left_join(region_events, by = "region_id")
 region_events_noabidjan <- region_events %>% 
   filter(region_id != 11)
 region_events_noabidjan_sf <- ci_regions %>% 
   left_join(region_events_noabidjan, by = "region_id")
-ggplot(data = region_events_noabidjan_sf) +
+
+# plot event counts
+ggplot(data = region_events_sf) +
   geom_sf(aes(fill = events_count)) +
   scale_fill_distiller(
     name = "ACLED Events,\n1997-2021", 
     type = "seq", palette = "Reds", direction = 1
     ) +
   theme_minimal()
-ggsave("acledevents_regionmap.png")
-ggplot(data = region_events_noabidjan_sf) +
-  geom_sf(aes(fill = protests_riots_count)) +
+#ggsave("acledevents_regionmap.png")
+ggplot(data = region_events_sf) +
+  geom_sf(aes(fill = protests_riots)) +
   scale_fill_distiller(
     name = "Protests & Riots,\n1997-2021", 
     type = "seq", palette = "Reds", direction = 1
     ) +
   theme_minimal()
-ggsave("protestsriots_regionmap.png")
-ggplot(data = region_events_noabidjan_sf) +
-  geom_sf(aes(fill = otherviolence_count)) +
+#ggsave("protestsriots_regionmap.png")
+ggplot(data = region_events_sf) +
+  geom_sf(aes(fill = battles_explosions)) +
   scale_fill_distiller(
-    name = "Battles, Explosions,\nViolence Against\nCivilians, 1997-2021",
+    name = "Battles & Explosions,\n1997-2021",
     type = "seq", palette = "Reds", direction = 1
     ) +
   theme_minimal()
-ggsave("otherviolence_regionmap.png")
-ggplot(data = region_events_noabidjan_sf) +
-  geom_sf(aes(fill = battles_count)) +
-  scale_fill_distiller(type = "seq", palette = "Reds", direction = 1)
-ggplot(data = region_events_noabidjan_sf) +
-  geom_sf(aes(fill = explosions_count)) +
-  scale_fill_distiller(type = "seq", palette = "Reds", direction = 1)
-ggplot(data = region_events_noabidjan_sf) + 
+#ggsave("battlesexplosions_regionmap.png")
+ggplot(data = region_events_sf) +
   geom_sf(aes(fill = violence_civ_count)) +
-  scale_fill_distiller(type = "seq", palette = "Reds", direction = 1)
-ggplot(data = region_events_noabidjan_sf) +
-  geom_sf(aes(fill = strategic_count)) +
-  scale_fill_distiller(type = "seq", palette = "Reds", direction = 1)
+  scale_fill_distiller(
+    name = "Violence Against\nCivilians, 1997-2021",
+    type = "seq", palette = "Reds", direction = 1
+    ) +
+  theme_minimal()
 
-# assigning regions to North and South
-north_districts <- c("Denguélé", "Savanes", "Zanzan", "Vallée du Bandama", 
-                     "Woroba")
-north_key <- ci_regions %>% 
-  st_drop_geometry() %>% 
-  as_tibble() %>% 
-  dplyr::select(GID_1, NAME_1, region_id, NAME_2) %>% 
-  mutate(
-    district_id = str_replace_all(GID_1, "^CIV\\.", ""), 
-    district_id = str_replace_all(district_id, "_1$", ""), 
-    district_id = as.integer(district_id)
-  ) %>% 
-  dplyr::select(district_id, NAME_1:NAME_2) %>% 
-  mutate(
-    north = if_else(NAME_1 %in% north_districts, 1, 0)
-  )
+# plot event rates per capita
+ggplot(data = region_events_sf) +
+  geom_sf(aes(fill = events_p1000)) +
+  scale_fill_distiller(
+    name = "ACLED Events Per 1000\nPeople, 1997-2021", 
+    type = "seq", palette = "Reds", direction = 1
+    ) +
+  theme_minimal()
+#ggsave("acledevents_regionmap.png")
+ggplot(data = region_events_sf) +
+  geom_sf(aes(fill = protests_p1000)) +
+  scale_fill_distiller(
+    name = "Protests & Riots Per\n1000 People, 1997-2021", 
+    type = "seq", palette = "Reds", direction = 1
+    ) +
+  theme_minimal()
+#ggsave("protestsriots_regionmap.png")
+ggplot(data = region_events_sf) +
+  geom_sf(aes(fill = battles_p1000)) +
+  scale_fill_distiller(
+    name = "Battles & Explosions Per\n1000 People, 1997-2021",
+    type = "seq", palette = "Reds", direction = 1
+    ) +
+  theme_minimal()
+#ggsave("battlesexplosions_regionmap.png")
+ggplot(data = region_events_sf) +
+  geom_sf(aes(fill = violciv_p1000)) +
+  scale_fill_distiller(
+    name = "Violence Against Civilians\nPer 1000 People, 1997-2021",
+    type = "seq", palette = "Reds", direction = 1
+    ) +
+  theme_minimal()
+
+# mapping ACLED events by year
+region_year_sf <- ci_regions %>% 
+  left_join(region_year, by = "region_id")
+ggplot(data = region_year_sf) +
+  geom_sf(aes(fill = events_p1000)) +
+  scale_fill_distiller(
+    name = "ACLED Events\nPer 1000 People", 
+    type = "seq", palette = "Reds", direction = 1
+    ) +
+  facet_wrap(vars(year)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggsave("acledevents_p1000_regionmap_allyears.png")
+ggplot(data = region_year_sf) +
+  geom_sf(aes(fill = events_count)) +
+  scale_fill_distiller(
+    name = "ACLED Events", 
+    type = "seq", palette = "Reds", direction = 1
+    ) +
+  facet_wrap(vars(year)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggsave("acledevents_regionmap_allyears.png")
+region_year_sf %>% 
+  filter(region_id != 11) %>% 
+  ggplot() +
+  geom_sf(aes(fill = events_count)) +
+  scale_fill_distiller(
+    name = "ACLED Events,\nExcluding Abidjan", 
+    type = "seq", palette = "Reds", direction = 1
+    ) +
+  facet_wrap(vars(year)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggsave("acledevents_regionmapnoabidjan_allyears.png")
+```
+
+```{r acled-trends-north-south}
 north_year <- region_year %>% 
-  left_join(north_key %>% dplyr::select(region_id, north), by = "region_id") %>% 
   group_by(north, year) %>% 
   summarise(
     temp2m_c = mean(temp2m_c),
@@ -689,11 +836,19 @@ north_year <- region_year %>%
     rioters_count = sum(rioters_count), 
     protesters_count = sum(protesters_count), 
     external_count = sum(external_count),
-    fatalities_count = sum(fatalities_count)
+    fatalities_count = sum(fatalities_count),
+    protests_riots = sum(protests_riots), 
+    battles_explosions = sum(battles_explosions),
+    pop_unfpa_2019 = sum(pop_unfpa_2019)
   ) %>% 
-  ungroup()
+  ungroup() %>% 
+  mutate(
+    events_p1000 = events_count / pop_unfpa_2019 * 1000, 
+    protests_p1000 = protests_riots / pop_unfpa_2019 * 1000, 
+    battles_p1000 = battles_explosions / pop_unfpa_2019 * 1000, 
+    violciv_p1000 = violence_civ_count / pop_unfpa_2019 * 1000
+  )
 north_year_noabidjan <- region_year %>% 
-  left_join(north_key %>% dplyr::select(region_id, north), by = "region_id") %>% 
   filter(region_id != 11) %>% 
   group_by(north, year) %>% 
   summarise(
@@ -716,9 +871,18 @@ north_year_noabidjan <- region_year %>%
     rioters_count = sum(rioters_count), 
     protesters_count = sum(protesters_count), 
     external_count = sum(external_count),
-    fatalities_count = sum(fatalities_count)
+    fatalities_count = sum(fatalities_count),
+    protests_riots = sum(protests_riots), 
+    battles_explosions = sum(battles_explosions),
+    pop_unfpa_2019 = sum(pop_unfpa_2019)
   ) %>% 
-  ungroup()
+  ungroup() %>% 
+  mutate(
+    events_p1000 = events_count / pop_unfpa_2019 * 1000, 
+    protests_p1000 = protests_riots / pop_unfpa_2019 * 1000, 
+    battles_p1000 = battles_explosions / pop_unfpa_2019 * 1000, 
+    violciv_p1000 = violence_civ_count / pop_unfpa_2019 * 1000
+  )
 
 # ACLED events by north vs south
 north_year %>% 
@@ -743,7 +907,32 @@ north_year %>%
     axis.text.x = element_text(angle = 45, hjust = 1), 
     panel.grid.minor = element_blank()
     )
-ggsave("acledevents_northsouth-year.png")
+#ggsave("acledevents_northsouth-year.png")
+north_year %>% 
+  filter(year < 2021) %>% 
+  ggplot(aes(x = year)) + 
+  geom_line(aes(y = events_p1000, group = north, color = factor(north))) +
+  geom_point(aes(y = events_p1000, group = north, color = factor(north))) +
+  scale_x_continuous(
+    name = "Year",
+    breaks = seq(1997, 2020, 1)
+    ) + 
+  scale_color_brewer(
+    type = "qual", 
+    palette = "Dark2", 
+    labels = c("South", "North")
+    ) +
+  ylab("Events Per 1000 People") +
+  ggtitle("Trends in ACLED Event Rates by North vs South") +
+  theme_minimal() +
+  theme(
+    legend.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1), 
+    panel.grid.minor = element_blank()
+    )
+ggsave("acledeventsp1000_northsouth-year.png")
+# not as big of a difference taking out Abidjan for per capita rates
+# which makes sense
 north_year_noabidjan %>% 
   filter(year < 2021) %>% 
   ggplot(aes(x = year)) + 
@@ -769,7 +958,75 @@ north_year_noabidjan %>%
     axis.text.x = element_text(angle = 45, hjust = 1), 
     panel.grid.minor = element_blank()
     )
-ggsave("acledevents_northsouth-year_noabidjan.png")
+#ggsave("acledevents_northsouth-year_noabidjan.png")
+north_year_noabidjan %>% 
+  filter(year < 2021) %>% 
+  ggplot(aes(x = year)) + 
+  geom_line(aes(y = events_p1000, group = north, color = factor(north))) +
+  geom_point(aes(y = events_p1000, group = north, color = factor(north))) +
+  scale_x_continuous(
+    name = "Year",
+    breaks = seq(1997, 2020, 1)
+    ) + 
+  scale_color_brewer(
+    type = "qual", 
+    palette = "Dark2", 
+    labels = c("South", "North")
+    ) +
+  ylab("Events Per 1000 People") +
+  labs (
+    title = "Trends in ACLED Rates by North vs South", 
+    subtitle = "Excluding Abidjan"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1), 
+    panel.grid.minor = element_blank()
+    )
+
+north_year %>% 
+  dplyr::select(north, year, protests_p1000:violciv_p1000) %>% 
+  pivot_longer(
+    protests_p1000:violciv_p1000, 
+    names_to = "event_subtype", 
+    values_to = "subtype_rate"
+  ) %>% 
+  mutate(
+    event_subtype = str_replace_all(event_subtype, "_p1000$", ""),
+    event_subtype = str_replace_all(
+      event_subtype, c(
+        "protests" = "Protests & Riots", 
+        "battles" = "Battles & Explosions", 
+        "violciv" = "Violence Against Civilians"
+      )
+    ), 
+    north_name = if_else(north == 1, "North", "South")
+    ) %>% 
+  filter(year < 2021) %>% 
+  ggplot(aes(x = year, y = subtype_rate, color = event_subtype)) +
+  geom_line() +
+  facet_wrap(vars(north_name)) +
+  scale_color_brewer(
+    name = "Event Subtype", 
+    type = "qual", 
+    palette = "Dark2"
+  ) +
+  labs(
+    x = "Year", 
+    y = "Events per 1000 People", 
+    title = "Trends in ACLED Event Rates by Subtype"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank(), 
+    panel.grid.major = element_line(size = .2), 
+    legend.position = "bottom"
+    )
+ggsave("acledsubtyperates_northsouth-year.png")
+```
+
+```{r acled-map-recent-events}
 # where are these events in 2019-2020 happening?
 region_recentevents <- region_year %>% 
   filter(between(year, 2018, 2021)) %>% 
@@ -822,34 +1079,11 @@ ggplot(data = region_recentevents_noabidjan_sf) +
   scale_fill_distiller(name = "", type = "seq", palette = "Reds", direction = 1) +
   theme_minimal()
 ggsave("otherviolencerecent_regionmap.png")
-
-# does it make sense to group violence against civilians with anything else?
-# probably we should consider as its own category
-acled %>% 
-  filter(event_type == "Violence against civilians") %>% 
-  dplyr::select(notes, event_date, sub_event_type, actor1, assoc_actor_2, admin2) %>% 
-  mutate(event_date = dmy(event_date)) %>% 
-  view()
-acled %>% 
-  filter(event_type == "Violence against civilians") %>% 
-  mutate(
-    ethnic = str_detect(notes, "ethnic"), 
-    protestmention = str_detect(notes, "protest")
-    ) %>% 
-  count(protestmention)
-acled %>% 
-  mutate(
-    land = str_detect(notes, "land")
-  ) %>% 
-  filter(land == TRUE) %>% 
-  dplyr::select(notes, event_date, event_type, actor1, assoc_actor_2, admin2) %>% 
-  mutate(event_date = dmy(event_date)) %>% 
-  view()
 ```
 
 # Initial models
 
-```{r fixest-models, eval = FALSE}
+```{r fixest-models}
 temp_unit_feols <- feols(
   events_count ~ temp2m_c_std | region_id, # by default clusters SEs on region_id
   data = region_year
@@ -876,25 +1110,303 @@ etable(
 
 # Model extensions
 
+- Dependent variables: all ACLED events, protests & riots, battles & explosions, violence against civilians
+  - counts and rates per 1000 people
+- Independent variables: temperature and precipitation
+  - levels (degrees Celsius and millimeters per day), standard deviational units from 1987-1996 means, temperature in levels and precipitation in absolute standard deviational units
+- Fixed effects and similar: region only, region and year, region FE with year as a control variable
+  - region and year FE preferred
+- Lags: contemporaneous only, 0:1, 0:3
+- Unweighted and weighted by 2019 region population
+- Full sample and split sample by North/South
+- All models cluster standard errors on region
+- All models use 1997-2020 data, dropping 2021 because data is incomplete
+
+```{r hard-code-lags}
+region_year_lags <- region_year %>% 
+  arrange(region_id, year) %>% 
+  group_by(region_id) %>% 
+  mutate(
+    temp2m_c_l1 = lag(temp2m_c, n = 1), 
+    temp2m_c_l2 = lag(temp2m_c, n = 2), 
+    temp2m_c_l3 = lag(temp2m_c, n = 3), 
+    prcp_mm_l1 = lag(prcp_mm, n = 1), 
+    prcp_mm_l2 = lag(prcp_mm, n = 2), 
+    prcp_mm_l3 = lag(prcp_mm, n = 3), 
+    temp2m_c_std_l1 = lag(temp2m_c_std, n = 1), 
+    temp2m_c_std_l2 = lag(temp2m_c_std, n = 2), 
+    temp2m_c_std_l3 = lag(temp2m_c_std, n = 3), 
+    prcp_mm_std_l1 = lag(prcp_mm_std, n = 1), 
+    prcp_mm_std_l2 = lag(prcp_mm_std, n = 2), 
+    prcp_mm_std_l3 = lag(prcp_mm_std, n = 3), 
+    prcp_mm_std_abs_l1 = lag(prcp_mm_std_abs, n = 1), 
+    prcp_mm_std_abs_l2 = lag(prcp_mm_std_abs, n = 2), 
+    prcp_mm_std_abs_l3 = lag(prcp_mm_std_abs, n = 3) 
+  ) %>% 
+  ungroup()
+```
+
+```{r models-climate-levels}
+#### climate variables in levels, region and year FE, unweighted ####
+levels_twoway_0to1_unw <- feols(
+  c(events_count, events_p1000, protests_riots, protests_p1000,
+    battles_explosions, battles_p1000, violence_civ_count, violciv_p1000) ~ 
+    # temperature in degrees Celsius and rainfall in mm per day, lags 0:1
+    temp2m_c + temp2m_c_l1 + prcp_mm + prcp_mm_l1 | 
+    # region and year fixed effects
+    region_id + year, 
+  data = region_year_lags %>% filter(year < 2021), 
+  # run models with the full sample, North, and South
+  fsplit = ~ north,
+  panel.id = ~ region_id + year
+)
+
+levels_twoway_0to3_unw <- feols(
+  c(events_count, events_p1000, protests_riots, protests_p1000,
+    battles_explosions, battles_p1000, violence_civ_count, violciv_p1000) ~ 
+    # temperature in degrees Celsius and rainfall in mm per day, lags 0:3
+    temp2m_c + temp2m_c_l1 + temp2m_c_l2 + temp2m_c_l3 + prcp_mm + prcp_mm_l1 + prcp_mm_l2 + prcp_mm_l3 | 
+    # region and year fixed effects
+    region_id + year, 
+  data = region_year_lags %>% filter(year < 2021), 
+  # run models with the full sample, North, and South
+  fsplit = ~ north,
+  panel.id = ~ region_id + year
+)
+
+#### climate variables in levels, region and year FE, population-weighted ####
+levels_twoway_0to1_popw <- feols(
+  c(events_count, events_p1000, protests_riots, protests_p1000,
+    battles_explosions, battles_p1000, violence_civ_count, violciv_p1000) ~ 
+    # temperature in degrees Celsius and rainfall in mm per day, lags 0:1
+    temp2m_c + temp2m_c_l1 + prcp_mm + prcp_mm_l1 | 
+    # region and year fixed effects
+    region_id + year, 
+  data = region_year_lags %>% filter(year < 2021), 
+  weights = ~ pop_unfpa_2019,
+  # run models with the full sample, North, and South
+  fsplit = ~ north,
+  panel.id = ~ region_id + year
+)
+
+levels_twoway_0to3_popw <- feols(
+  c(events_count, events_p1000, protests_riots, protests_p1000,
+    battles_explosions, battles_p1000, violence_civ_count, violciv_p1000) ~ 
+    # temperature in degrees Celsius and rainfall in mm per day, lags 0:3
+    temp2m_c + temp2m_c_l1 + temp2m_c_l2 + temp2m_c_l3 + prcp_mm + prcp_mm_l1 + prcp_mm_l2 + prcp_mm_l3 | 
+    # region and year fixed effects
+    region_id + year, 
+  data = region_year_lags %>% filter(year < 2021), 
+  weights = ~ pop_unfpa_2019,
+  # run models with the full sample, North, and South
+  fsplit = ~ north,
+  panel.id = ~ region_id + year
+)
+```
+
+```{r models-climate-sdunits}
+#### climate variables in std dev units, region and year FE, unweighted ####
+sdunits_twoway_0to1_unw <- feols(
+  c(events_count, events_p1000, protests_riots, protests_p1000,
+    battles_explosions, battles_p1000, violence_civ_count, violciv_p1000) ~ 
+    # temperature and rainfall in standard deviational units from baseline mean
+    temp2m_c_std + temp2m_c_std_l1 + prcp_mm_std + prcp_mm_std_l1 | 
+    # region and year fixed effects
+    region_id + year, 
+  data = region_year_lags %>% filter(year < 2021), 
+  # run models with the full sample, North, and South
+  fsplit = ~ north,
+  panel.id = ~ region_id + year
+)
+
+sdunits_twoway_0to3_unw <- feols(
+  c(events_count, events_p1000, protests_riots, protests_p1000,
+    battles_explosions, battles_p1000, violence_civ_count, violciv_p1000) ~ 
+    # temperature and rainfall in standard deviational units from baseline mean
+    temp2m_c_std + temp2m_c_std_l1 + temp2m_c_std_l2 + temp2m_c_std_l3 + prcp_mm_std + prcp_mm_std_l1 + prcp_mm_std_l2 + prcp_mm_std_l3 | 
+    # region and year fixed effects
+    region_id + year, 
+  data = region_year_lags %>% filter(year < 2021), 
+  # run models with the full sample, North, and South
+  fsplit = ~ north,
+  panel.id = ~ region_id + year
+)
+
+#### climate variables in st dev units, region & year FE, population-weighted ####
+sdunits_twoway_0to1_popw <- feols(
+  c(events_count, events_p1000, protests_riots, protests_p1000,
+    battles_explosions, battles_p1000, violence_civ_count, violciv_p1000) ~ 
+    # temperature and rainfall in standard deviational units from baseline mean
+    temp2m_c_std + temp2m_c_std_l1 + prcp_mm_std + prcp_mm_std_l1 | 
+    # region and year fixed effects
+    region_id + year, 
+  data = region_year_lags %>% filter(year < 2021), 
+  weights = ~ pop_unfpa_2019,
+  # run models with the full sample, North, and South
+  fsplit = ~ north,
+  panel.id = ~ region_id + year
+)
+
+sdunits_twoway_0to3_popw <- feols(
+  c(events_count, events_p1000, protests_riots, protests_p1000,
+    battles_explosions, battles_p1000, violence_civ_count, violciv_p1000) ~ 
+    # temperature and rainfall in standard deviational units from baseline mean
+    temp2m_c_std + temp2m_c_std_l1 + temp2m_c_std_l2 + temp2m_c_std_l3 + prcp_mm_std + prcp_mm_std_l1 + prcp_mm_std_l2 + prcp_mm_std_l3 | 
+    # region and year fixed effects
+    region_id + year, 
+  data = region_year_lags %>% filter(year < 2021), 
+  weights = ~ pop_unfpa_2019,
+  # run models with the full sample, North, and South
+  fsplit = ~ north,
+  panel.id = ~ region_id + year
+)
+```
+
+```{r models-climate-absprcp}
+#### temp in levels/prcp in abs st dev units, region and year FE, unweighted ####
+absprcp_twoway_0to1_unw <- feols(
+  c(events_count, events_p1000, protests_riots, protests_p1000,
+    battles_explosions, battles_p1000, violence_civ_count, violciv_p1000) ~ 
+    # temperature in degrees Celsius and rainfall in absolute st dev units
+    temp2m_c + temp2m_c_l1 + prcp_mm_std_abs + prcp_mm_std_abs_l1 | 
+    # region and year fixed effects
+    region_id + year, 
+  data = region_year_lags %>% filter(year < 2021), 
+  # run models with the full sample, North, and South
+  fsplit = ~ north,
+  panel.id = ~ region_id + year
+)
+
+absprcp_twoway_0to3_unw <- feols(
+  c(events_count, events_p1000, protests_riots, protests_p1000,
+    battles_explosions, battles_p1000, violence_civ_count, violciv_p1000) ~ 
+    # temperature in degrees Celsius and rainfall in absolute st dev units
+    temp2m_c + temp2m_c_l1 + temp2m_c_l2 + temp2m_c_l3 + prcp_mm_std_abs + prcp_mm_std_abs_l1 + prcp_mm_std_abs_l2 + prcp_mm_std_abs_l3 | 
+    # region and year fixed effects
+    region_id + year, 
+  data = region_year_lags %>% filter(year < 2021), 
+  # run models with the full sample, North, and South
+  fsplit = ~ north,
+  panel.id = ~ region_id + year
+)
+
+#### temp in levels/prcp in abs st dev units, region & year FE, pop-weighted ####
+absprcp_twoway_0to1_popw <- feols(
+  c(events_count, events_p1000, protests_riots, protests_p1000,
+    battles_explosions, battles_p1000, violence_civ_count, violciv_p1000) ~ 
+    # temperature in degrees Celsius and rainfall in absolute st dev units
+    temp2m_c + temp2m_c_l1 + prcp_mm_std_abs + prcp_mm_std_abs_l1 | 
+    # region and year fixed effects
+    region_id + year, 
+  data = region_year_lags %>% filter(year < 2021), 
+  weights = ~ pop_unfpa_2019,
+  # run models with the full sample, North, and South
+  fsplit = ~ north,
+  panel.id = ~ region_id + year
+)
+
+absprcp_twoway_0to3_popw <- feols(
+  c(events_count, events_p1000, protests_riots, protests_p1000,
+    battles_explosions, battles_p1000, violence_civ_count, violciv_p1000) ~ 
+    # temperature in degrees Celsius and rainfall in absolute st dev units
+    temp2m_c + temp2m_c_l1 + temp2m_c_l2 + temp2m_c_l3 + prcp_mm_std_abs + prcp_mm_std_abs_l1 + prcp_mm_std_abs_l2 + prcp_mm_std_abs_l3 | 
+    # region and year fixed effects
+    region_id + year, 
+  data = region_year_lags %>% filter(year < 2021), 
+  weights = ~ pop_unfpa_2019,
+  # run models with the full sample, North, and South
+  fsplit = ~ north,
+  panel.id = ~ region_id + year
+)
+```
+
+# Recap model parameters
+
+- Dependent variables: all ACLED events, protests & riots, battles & explosions, violence against civilians
+  - counts and rates per 1000 people
+- Independent variables: temperature and precipitation
+  - levels (degrees Celsius and millimeters per day), standard deviational units from 1987-1996 means, temperature in levels and precipitation in absolute standard deviational units
+- Fixed effects and similar: region only, region and year, region FE with year as a control variable
+  - region and year FE preferred
+- Lags: contemporaneous only, 0:1, 0:3
+- Unweighted and weighted by 2019 region population
+- Full sample and split sample by North/South
+- All models cluster standard errors on region
+- All models use 1997-2020 data, dropping 2021 because data is incomplete
+
+```{r visualize-estimates}
+etable(
+  levels_twoway_0to1_unw$`Full sample`$events_count, 
+  levels_twoway_0to1_unw$`Full sample`$events_p1000, 
+  levels_twoway_0to1_popw$`Full sample`$events_count, 
+  levels_twoway_0to1_popw$`Full sample`$events_p1000
+)
+```
+
 ```{r model-extensions}
 # model protests/riots, battles/explosions, & violence against civilians separately
 separatedvs_regionFE <- feols(
   c(protests_riots, battles_explosions, violence_civ_count) ~ 
     temp2m_c_std + prcp_mm_std | region_id,
-  data = region_year
+  data = region_year %>% filter(year < 2021)
 )
 separatedvs_twowayFE <- feols(
   c(protests_riots, battles_explosions, violence_civ_count) ~ 
     temp2m_c_std + prcp_mm_std | region_id + year,
-  data = region_year,
-  cluster = ~region_id + year
+  data = region_year %>% filter(year < 2021)
 )
-
-# model event types with region FE and year as linear regressor
 separatedvs_yearcontrol <- feols(
   c(protests_riots, battles_explosions, violence_civ_count) ~ 
     temp2m_c_std + prcp_mm_std + year | region_id,
-  data = region_year
+  data = region_year %>% filter(year < 2021)
+)
+# same but with non-standardized temp & precip
+climlevels_regionFE <- feols(
+  c(protests_riots, battles_explosions, violence_civ_count) ~ temp2m_c + prcp_mm | 
+    region_id,
+  data = region_year %>% filter(year < 2021)
+)
+climlevels_twowayFE <- feols(
+  c(protests_riots, battles_explosions, violence_civ_count) ~ temp2m_c + prcp_mm | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021)
+)
+climlevels_yearcontrol <- feols(
+  c(protests_riots, battles_explosions, violence_civ_count) ~ 
+    temp2m_c + prcp_mm + year | region_id,
+  data = region_year %>% filter(year < 2021)
+)
+# same but with mean change temp & precip
+climmeanch_regionFE <- feols(
+  c(protests_riots, battles_explosions, violence_civ_count) ~ 
+    temp2m_c_meanchange + prcp_mm_meanchange | region_id,
+  data = region_year %>% filter(year < 2021)
+)
+climmeanch_twowayFE <- feols(
+  c(protests_riots, battles_explosions, violence_civ_count) ~ 
+    temp2m_c_meanchange + prcp_mm_meanchange | region_id + year,
+  data = region_year %>% filter(year < 2021)
+)
+climmeanch_yearcontrol <- feols(
+  c(protests_riots, battles_explosions, violence_civ_count) ~ 
+    temp2m_c_meanchange + prcp_mm_meanchange + year | region_id,
+  data = region_year %>% filter(year < 2021)
+)
+# same but with temp in levels and precip in absolute deviations
+absprcp_regionFE <- feols(
+  c(protests_riots, battles_explosions, violence_civ_count) ~ 
+    temp2m_c + prcp_mm_std_abs | region_id,
+  data = region_year %>% filter(year < 2021)
+)
+absprcp_twowayFE <- feols(
+  c(protests_riots, battles_explosions, violence_civ_count) ~ 
+    temp2m_c + prcp_mm_std_abs | region_id + year,
+  data = region_year %>% filter(year < 2021)
+)
+absprcp_yearcontrol <- feols(
+  c(protests_riots, battles_explosions, violence_civ_count) ~ 
+    temp2m_c + prcp_mm_std_abs + year | region_id,
+  data = region_year %>% filter(year < 2021)
 )
 
 # model contemporaneous and one lag
@@ -902,45 +1414,96 @@ separatedvs_yearcontrol <- feols(
 allevents_twowayFE_1to0 <- feols(
   events_count ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | region_id + year,
   data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year,
-  cluster = ~region_id + year
+  panel.id = ~region_id + year
 ) 
 protests_twowayFE_1to0 <- feols(
   protests_riots ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | 
     region_id + year,
   data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year,
-  cluster = ~region_id + year
+  panel.id = ~region_id + year
 )
 battles_twowayFE_1to0 <- feols(
   battles_explosions ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | 
     region_id + year,
   data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year,
-  cluster = ~region_id + year
+  panel.id = ~region_id + year
 )
 violciv_twowayFE_1to0 <- feols(
   violence_civ_count ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | 
     region_id + year,
   data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year,
-  cluster = ~region_id + year
+  panel.id = ~region_id + year
 )
-
-battles_twowayFE_clreg_1to0 <- feols(
-  battles_explosions ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | 
+# same but with non-standardized temp and precip
+allevents_climlevels_twowayFE_1to0 <- feols(
+  events_count ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
+) 
+protests_climlevels_twowayFE_1to0 <- feols(
+  protests_riots ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
+)
+battles_climlevels_twowayFE_1to0 <- feols(
+  battles_explosions ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
+)
+violciv_climlevels_twowayFE_1to0 <- feols(
+  violence_civ_count ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
+)
+# same but with mean change temp and precip
+allevents_climmeanch_twowayFE_1to0 <- feols(
+  events_count ~ l(temp2m_c_meanchange, 0:1) + l(prcp_mm_meanchange, 0:1) | 
     region_id + year,
   data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year,
-  cluster = ~region_id
-)
-etable(battles_twowayFE_1to0, battles_twowayFE_clreg_1to0)
-feols(
-  battles_explosions ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | 
+  panel.id = ~region_id + year
+) 
+protests_climmeanch_twowayFE_1to0 <- feols(
+  protests_riots ~ l(temp2m_c_meanchange, 0:1) + l(prcp_mm_meanchange, 0:1) | 
     region_id + year,
   data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year,
-  cluster = ~region_id
+  panel.id = ~region_id + year
+)
+battles_climmeanch_twowayFE_1to0 <- feols(
+  battles_explosions ~ l(temp2m_c_meanchange, 0:1) + l(prcp_mm_meanchange, 0:1) | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
+)
+violciv_climmeanch_twowayFE_1to0 <- feols(
+  violence_civ_count ~ l(temp2m_c_meanchange, 0:1) + l(prcp_mm_meanchange, 0:1) | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
+)
+# same but with temp in levels and precip in absolute deviations
+allevents_absprcp_twowayFE_1to0 <- feols(
+  events_count ~ l(temp2m_c, 0:1) + l(prcp_mm_std_abs, 0:1) | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
+) 
+protests_absprcp_twowayFE_1to0 <- feols(
+  protests_riots ~ l(temp2m_c, 0:1) + l(prcp_mm_std_abs, 0:1) | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
+)
+battles_absprcp_twowayFE_1to0 <- feols(
+  battles_explosions ~ l(temp2m_c, 0:1) + l(prcp_mm_std_abs, 0:1) | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
+)
+violciv_absprcp_twowayFE_1to0 <- feols(
+  violence_civ_count ~ l(temp2m_c, 0:1) + l(prcp_mm_std_abs, 0:1) | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
 )
 
 # test additional lags
@@ -948,22 +1511,19 @@ protests_twowayFE_3to0 <- feols(
   protests_riots ~ l(temp2m_c_std, 0:3) + l(prcp_mm_std, 0:3) | 
     region_id + year,
   data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year,
-  cluster = ~region_id + year
+  panel.id = ~region_id + year
 )
 battles_twowayFE_3to0 <- feols(
   battles_explosions ~ l(temp2m_c_std, 0:3) + l(prcp_mm_std, 0:3) | 
     region_id + year,
   data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year,
-  cluster = ~region_id + year
+  panel.id = ~region_id + year
 )
 violciv_twowayFE_3to0 <- feols(
   violence_civ_count ~ l(temp2m_c_std, 0:3) + l(prcp_mm_std, 0:3) | 
     region_id + year,
   data = region_year %>% filter(year < 2021),
-  panel.id = ~region_id + year,
-  cluster = ~region_id + year
+  panel.id = ~region_id + year
 )
 
 # model contemporaneous + 1 lag with year regressor
@@ -989,8 +1549,83 @@ violciv_yearcontrol_1to0 <- feols(
   cluster = ~region_id
 )
 
-coefplot(protests_twowayFE_1to0)
-coefplot(battles_twowayFE_1to0)
-coefplot(violciv_twowayFE_1to0)
+protests_lags_compareclimvars <- etable(
+  protests_twowayFE_1to0, protests_climlevels_twowayFE_1to0, 
+  protests_climmeanch_twowayFE_1to0, protests_absprcp_twowayFE_1to0
+)
+battles_lags_compareclimvars <- etable(
+  battles_twowayFE_1to0, battles_climlevels_twowayFE_1to0, 
+  battles_climmeanch_twowayFE_1to0, battles_absprcp_twowayFE_1to0
+)
+violciv_lags_compareclimvars <- etable(
+  violciv_twowayFE_1to0, violciv_climlevels_twowayFE_1to0, 
+  violciv_climmeanch_twowayFE_1to0, violciv_absprcp_twowayFE_1to0
+)
+view(protests_lags_compareclimvars)
+view(battles_lags_compareclimvars)
+view(violciv_lags_compareclimvars)
+
+# model contemporaneous and one lag - population-normalized DVs
+# drops the earliest year because no lag
+alleventsp1000_twowayFE_1to0 <- feols(
+  events_p1000 ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
+) 
+protestsp1000_twowayFE_1to0 <- feols(
+  protests_p1000 ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
+)
+battlesp1000_twowayFE_1to0 <- feols(
+  battles_p1000 ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
+)
+violcivp1000_twowayFE_1to0 <- feols(
+  violciv_p1000 ~ l(temp2m_c_std, 0:1) + l(prcp_mm_std, 0:1) | 
+    region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
+)
+# same but with non-standardized temp and precip
+alleventsp1000_climlevels_twowayFE_1to0 <- feols(
+  events_p1000 ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
+) 
+protestsp1000_climlevels_twowayFE_1to0 <- feols(
+  protests_p1000 ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
+)
+battlesp1000_climlevels_twowayFE_1to0 <- feols(
+  battles_p1000 ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
+)
+violcivp1000_climlevels_twowayFE_1to0 <- feols(
+  violciv_p1000 ~ l(temp2m_c, 0:1) + l(prcp_mm, 0:1) | region_id + year,
+  data = region_year %>% filter(year < 2021),
+  panel.id = ~region_id + year
+)
+
+protests_lags_comparedvs <- etable(
+  protests_twowayFE_1to0, protestsp1000_twowayFE_1to0, 
+  protests_climlevels_twowayFE_1to0, protestsp1000_climlevels_twowayFE_1to0
+)
+battles_lags_comparedvs <- etable(
+  battles_twowayFE_1to0, battlesp1000_twowayFE_1to0, 
+  battles_climlevels_twowayFE_1to0, battlesp1000_climlevels_twowayFE_1to0
+)
+violciv_lags_comparedvs <- etable(
+  violciv_twowayFE_1to0, violcivp1000_twowayFE_1to0, 
+  violciv_climlevels_twowayFE_1to0, violcivp1000_climlevels_twowayFE_1to0
+)
+view(protests_lags_comparedvs)
+view(battles_lags_comparedvs)
+view(violciv_lags_comparedvs)
 ```
 
