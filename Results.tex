@@ -1,0 +1,249 @@
+\documentclass[12pt]{article}
+
+
+%----------Packages----------
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{dcolumn}
+\usepackage{dsfont}
+\usepackage{mathrsfs}
+\usepackage{stmaryrd}
+\usepackage[all]{xy}
+\usepackage[mathcal]{eucal}
+\usepackage{verbatim}  %%includes comment environment
+\usepackage{fullpage}  %%smaller margins
+\usepackage{hyperref}
+\usepackage{setspace}
+\onehalfspacing
+%----------Commands----------
+
+%%penalizes orphans
+\clubpenalty=9999
+\widowpenalty=9999
+
+%% bold math capitals
+\newcommand{\bA}{\mathbf{A}}
+\newcommand{\bB}{\mathbf{B}}
+\newcommand{\bC}{\mathbf{C}}
+\newcommand{\bD}{\mathbf{D}}
+\newcommand{\bE}{\mathbf{E}}
+\newcommand{\bF}{\mathbf{F}}
+\newcommand{\bG}{\mathbf{G}}
+\newcommand{\bH}{\mathbf{H}}
+\newcommand{\bI}{\mathbf{I}}
+\newcommand{\bJ}{\mathbf{J}}
+\newcommand{\bK}{\mathbf{K}}
+\newcommand{\bL}{\mathbf{L}}
+\newcommand{\bM}{\mathbf{M}}
+\newcommand{\bN}{\mathbf{N}}
+\newcommand{\bO}{\mathbf{O}}
+\newcommand{\bP}{\mathbf{P}}
+\newcommand{\bQ}{\mathbf{Q}}
+\newcommand{\bR}{\mathbf{R}}
+\newcommand{\bS}{\mathbf{S}}
+\newcommand{\bT}{\mathbf{T}}
+\newcommand{\bU}{\mathbf{U}}
+\newcommand{\bV}{\mathbf{V}}
+\newcommand{\bW}{\mathbf{W}}
+\newcommand{\bX}{\mathbf{X}}
+\newcommand{\bY}{\mathbf{Y}}
+\newcommand{\bZ}{\mathbf{Z}}
+
+%% blackboard bold math capitals
+\newcommand{\bbA}{\mathbb{A}}
+\newcommand{\bbB}{\mathbb{B}}
+\newcommand{\bbC}{\mathbb{C}}
+\newcommand{\bbD}{\mathbb{D}}
+\newcommand{\bbE}{\mathbb{E}}
+\newcommand{\bbF}{\mathbb{F}}
+\newcommand{\bbG}{\mathbb{G}}
+\newcommand{\bbH}{\mathbb{H}}
+\newcommand{\bbI}{\mathbb{I}}
+\newcommand{\bbJ}{\mathbb{J}}
+\newcommand{\bbK}{\mathbb{K}}
+\newcommand{\bbL}{\mathbb{L}}
+\newcommand{\bbM}{\mathbb{M}}
+\newcommand{\bbN}{\mathbb{N}}
+\newcommand{\bbO}{\mathbb{O}}
+\newcommand{\bbP}{\mathbb{P}}
+\newcommand{\bbQ}{\mathbb{Q}}
+\newcommand{\bbR}{\mathbb{R}}
+\newcommand{\bbS}{\mathbb{S}}
+\newcommand{\bbT}{\mathbb{T}}
+\newcommand{\bbU}{\mathbb{U}}
+\newcommand{\bbV}{\mathbb{V}}
+\newcommand{\bbW}{\mathbb{W}}
+\newcommand{\bbX}{\mathbb{X}}
+\newcommand{\bbY}{\mathbb{Y}}
+\newcommand{\bbZ}{\mathbb{Z}}
+
+%% script math capitals
+\newcommand{\sA}{\mathscr{A}}
+\newcommand{\sB}{\mathscr{B}}
+\newcommand{\sC}{\mathscr{C}}
+\newcommand{\sD}{\mathscr{D}}
+\newcommand{\sE}{\mathscr{E}}
+\newcommand{\sF}{\mathscr{F}}
+\newcommand{\sG}{\mathscr{G}}
+\newcommand{\sH}{\mathscr{H}}
+\newcommand{\sI}{\mathscr{I}}
+\newcommand{\sJ}{\mathscr{J}}
+\newcommand{\sK}{\mathscr{K}}
+\newcommand{\sL}{\mathscr{L}}
+\newcommand{\sM}{\mathscr{M}}
+\newcommand{\sN}{\mathscr{N}}
+\newcommand{\sO}{\mathscr{O}}
+\newcommand{\sP}{\mathscr{P}}
+\newcommand{\sQ}{\mathscr{Q}}
+\newcommand{\sR}{\mathscr{R}}
+\newcommand{\sS}{\mathscr{S}}
+\newcommand{\sT}{\mathscr{T}}
+\newcommand{\sU}{\mathscr{U}}
+\newcommand{\sV}{\mathscr{V}}
+\newcommand{\sW}{\mathscr{W}}
+\newcommand{\sX}{\mathscr{X}}
+\newcommand{\sY}{\mathscr{Y}}
+\newcommand{\sZ}{\mathscr{Z}}
+
+\renewcommand{\phi}{\varphi}
+%\renewcommand{\emptyset}{\O}
+
+\providecommand{\abs}[1]{\lvert #1 \rvert}
+\providecommand{\norm}[1]{\lVert #1 \rVert}
+\providecommand{\x}{\times}
+\providecommand{\ar}{\rightarrow}
+\providecommand{\arr}{\longrightarrow}
+
+
+%----------Theorems----------
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{nondefinition}[theorem]{Non-Definition}
+\newtheorem{exercise}[theorem]{Exercise}
+
+\numberwithin{equation}{subsection}
+
+
+%----------Title-------------
+\title{Sample Latex Document}
+\author{Robin Walters}
+
+\begin{document}
+
+\pagestyle{plain}
+
+
+%%---  sheet number for theorem counter
+%\setcounter{section}{1}   
+
+\begin{center}
+{\large Big Centered Text!} \\ 
+\vspace{.2in}  
+Smaller text
+\end{center}
+
+\bigskip \bigskip
+
+\section{Section}
+
+
+\begin{table}[!htbp] \centering 
+  \caption{Results} 
+  \label{} 
+\begin{tabular}{@{\extracolsep{5pt}}lD{.}{.}{-3} D{.}{.}{-3} D{.}{.}{-3} } 
+\\[-1.8ex]\hline 
+\hline \\[-1.8ex] 
+ & \multicolumn{3}{c}{\textit{Dependent variable:}} \\ 
+\cline{2-4} 
+\\[-1.8ex] & \multicolumn{3}{c}{EVENT} \\ 
+\\[-1.8ex] & \multicolumn{1}{c}{(1)} & \multicolumn{1}{c}{(2)} & \multicolumn{1}{c}{(3)}\\ 
+\hline \\[-1.8ex] 
+ border\_region & -0.0027 & -0.0028 & -0.0028 \\ 
+  & (0.0019) & (0.0019) & (0.0019) \\ 
+  & & & \\ 
+ border\_ev\_1 & -0.0007 &  &  \\ 
+  & (0.0017) &  &  \\ 
+  & & & \\ 
+ border\_region:border\_ev\_1 & 0.005 &  &  \\ 
+  & (0.003) &  &  \\ 
+  & & & \\ 
+ border\_ev\_3 &  & -0.0008 &  \\ 
+  &  & (0.0017) &  \\ 
+  & & & \\ 
+ border\_region:border\_ev\_3 &  & 0.0055^{*} &  \\ 
+  &  & (0.0032) &  \\ 
+  & & & \\ 
+ border\_ev\_6 &  &  & -0.001 \\ 
+  &  &  & (0.0017) \\ 
+  & & & \\ 
+ border\_region:border\_ev\_6 &  &  & 0.0058^{*} \\ 
+  &  &  & (0.0032) \\ 
+  & & & \\ 
+ Constant & 0.004426^{***} & 0.004486^{***} & 0.00466^{***} \\ 
+  & (0.00163) & (0.00165) & (0.00169) \\ 
+  & & & \\ 
+\hline \\[-1.8ex] 
+Observations & \multicolumn{1}{c}{9,504} & \multicolumn{1}{c}{9,504} & \multicolumn{1}{c}{9,504} \\ 
+R$^{2}$ & \multicolumn{1}{c}{0.0006} & \multicolumn{1}{c}{0.0006} & \multicolumn{1}{c}{0.0006} \\ 
+Adjusted R$^{2}$ & \multicolumn{1}{c}{0.00027} & \multicolumn{1}{c}{0.00028} & \multicolumn{1}{c}{0.0003} \\ 
+p-value & \multicolumn{1}{c}{0.2502} & \multicolumn{1}{c}{0.2496} & \multicolumn{1}{c}{0.2476} \\ 
+F Statistic (df = 3; 9500) & \multicolumn{1}{c}{1.437} & \multicolumn{1}{c}{1.439} & \multicolumn{1}{c}{1.447} \\ 
+\hline 
+\hline \\[-1.8ex] 
+\textit{Note:}  & \multicolumn{3}{r}{$^{*}$p$<$0.1; $^{**}$p$<$0.05; $^{***}$p$<$0.01} \\ 
+\end{tabular} 
+\end{table} 
+
+
+\begin{table}
+\begin{center}
+\begin{tabular}{l c}
+\hline
+ & Model 1 \\
+\hline
+(Intercept)                  & $0.00^{*}$ \\
+                             & $(0.00)$   \\
+border\_region               & $-0.00$    \\
+                             & $(0.00)$   \\
+border\_ev\_6                & $-0.00$    \\
+                             & $(0.00)$   \\
+border\_region:border\_ev\_6 & $0.01$     \\
+                             & $(0.00)$   \\
+\hline
+R$^2$                        & $0.00$     \\
+Adj. R$^2$                   & $0.00$     \\
+Statistic                    & $1.45$     \\
+P Value                      & $0.25$     \\
+DF Resid.                    & $18.93$    \\
+nobs                         & $9504$     \\
+\hline
+\multicolumn{2}{l}{\scriptsize{$^{***}p<0.001$; $^{**}p<0.01$; $^{*}p<0.05$}}
+\end{tabular}
+\caption{Statistical models}
+\label{table:coefficients}
+\end{center}
+\end{table}
+
+If we have an equation, then it becomes pulled out of text.
+\begin{equation*}
+x + y = z.
+\end{equation*}
+
+Use dollar signs for math symbols not in equations $x+y = z$.
+
+Its easy to add special symbols such as $\alpha, \pm, \sum, x \in A$.  
+
+If you want to find a special symbol look online.  
+
+
+
+
+
+\end{document}

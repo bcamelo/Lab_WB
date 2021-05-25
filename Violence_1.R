@@ -1,19 +1,30 @@
-library(tidyverse)
 library(sf)
 library(lubridate)
 library(raster)
 library(plm)
 library(stargazer)
+library(texreg)
+library(tidyverse)
 
 
-path <- "~/Dropbox/Harris/Spring 2021/LAB WB"
+setwd("~/Dropbox/Harris/Spring 2021/LAB WB/Lab_WB")
 
-acled <- read.csv(paste0(path,"/Africa_1997-2021_Apr16.csv")) %>%
-  filter(COUNTRY == "Ivory Coast" |COUNTRY == "Mali" |COUNTRY == "Burkina Faso")
+# acled <- read.csv("~/Dropbox/Harris/Spring 2021/LAB WB/Africa_1997-2021_Apr16.csv") %>%
+#  filter(COUNTRY == "Ivory Coast" |COUNTRY == "Mali" |COUNTRY == "Burkina Faso")
 
-write_csv(acled_outborders, "acled_out.csv")
+acled <- read.csv("~/Dropbox/Harris/Spring 2021/LAB WB/Africa_1997-2021_Apr16.csv") %>%
+  filter(COUNTRY == "Ivory Coast" |COUNTRY == "Mali" |COUNTRY == "Burkina Faso") %>%
+  sf::st_as_sf(coords = c("LONGITUDE", "LATITUDE"), crs = 4326)
+
+# write_csv(acled, "acled.csv")
+
+acled <- read_csv("acled.csv")
 
 ci_regions <-  raster::getData('GADM', country = "CIV", level = 2) %>%
+  # Convert to a sf object with the same CRS as we used above
+  st_as_sf(crs = 4326)
+
+ci_regions1 <-  raster::getData('GADM', country = "CIV", level = 1) %>%
   # Convert to a sf object with the same CRS as we used above
   st_as_sf(crs = 4326)
 
@@ -28,6 +39,33 @@ bf_regions <-  raster::getData('GADM', country = "BFA", level = 1) %>%
 acled$EVENT_DATE <- as.Date(acled$EVENT_DATE, "%d-%B-%Y")         
 
 acled$EVENT_DATE <- format(as.Date(acled$EVENT_DATE), "%Y-%m")
+
+#Create a dummy for actors who operate on both sides
+x<-c(actors="Bissa Ethnic Militia (Ivory Coast)" ,"Katiba Macina" ,
+     "AQIM: Al Qaeda in the Islamic Maghreb",
+     "Dozo Communal Militia (Ivory Coast)",  
+     "Dozo Militia",
+     "Lobi Ethnic Militia (Ivory Coast)" , 
+     "Militia (Miners)",
+     "Mossi Ethnic Militia (Burkina Faso)" ,
+     "Unidentified Armed Group (Burkina Faso)", 
+     "Islamic State (Greater Sahara) and/or Ansaroul Islam",
+     "GMA: Mourabitounes Group of Azawad", 
+     "Fula Ethnic Militia (Burkina Faso)", 
+     "Fulani Ethnic Militia (Burkina Faso)",
+     "Bobo Ethnic Militia (Burkina Faso)", 
+     "Ansaroul Islam", 
+     "Lobi Ethnic Militia (Burkina Faso)",  
+     "Al Mourabitoune Battalion",
+     "Fulani Ethnic Militia (Mali)",
+     "Baoule Ethnic Militia (Burkina Faso)",
+     "Bobo Ethnic Militia (Burkina Faso)", 
+     "Bozo Ethnic Militia (Mali)" ,  
+     "Unidentified Ethnic Militia (Burkina Faso)" , 
+     "Ngadana Communal Militia (Ivory Coast)")
+
+
+acled$ActorsInOut= ifelse(acled$ACTOR1 %in% x ,1,0)
 
 acled_clean <- acled %>%
   filter(EVENT_TYPE == "Violence against civilians" | EVENT_TYPE == "Battles") %>%
@@ -62,6 +100,9 @@ acled_clean <- acled %>%
 
 acled_clean$EVENT <- 1
 
+acled_clean <- acled_clean %>%
+  filter(ActorsInOut == 1)
+
 acled_borders <- acled_clean %>%
   filter(COUNTRY == "Ivory Coast" | ADMIN1 == "Sikasso"|
            ADMIN1 == "Cascades" | ADMIN1 == "Sud-Ouest")
@@ -81,6 +122,7 @@ acled_outborders <- acled_outborders %>%
   select(EVENT_DATE, EVENT) %>%
   group_by(EVENT_DATE) %>%
   summarise(MONTH_CASES = sum(EVENT))
+
   
 acled_outborders_total <- acled_clean %>%
   filter(COUNTRY != "Ivory Coast") %>%
@@ -146,45 +188,48 @@ dates <- plain %>%
 outborders_total <- dates %>%
   full_join(acled_outborders_total, by = c("DATES" = "EVENT_DATE"))
 
+#Adding new variable with lags (1 to 6 months) # it is just copy the MONTH_ALL_CASES variable, 
+#but in the first 'n' rows we add an NA and than start the MONTH_ALL_CASES column.
+
 outborders_total$CASES_1 <- 
   c(NA,outborders_total$MONTH_ALL_CASES[1:(length(outborders_total$MONTH_ALL_CASES)-1)])
 
 outborders_total$CASES_2 <- 
   c(NA,NA,outborders_total$MONTH_ALL_CASES[1:(length(outborders_total$MONTH_ALL_CASES)-2)])
 
+outborders_total$CASES_3 <- 
+  c(NA,NA,NA, outborders_total$MONTH_ALL_CASES[1:(length(outborders_total$MONTH_ALL_CASES)-3)])
+
+outborders_total$CASES_4 <- 
+  c(NA,NA,NA,NA, outborders_total$MONTH_ALL_CASES[1:(length(outborders_total$MONTH_ALL_CASES)-4)])
+
+outborders_total$CASES_5 <- 
+  c(NA,NA,NA,NA,NA,outborders_total$MONTH_ALL_CASES[1:(length(outborders_total$MONTH_ALL_CASES)-5)])
+
+#cleaning the NA
+
 outborders_total$CASES_1[is.na(outborders_total$CASES_1)] <- 0
 outborders_total$CASES_2[is.na(outborders_total$CASES_2)] <- 0
+outborders_total$CASES_3[is.na(outborders_total$CASES_3)] <- 0
+outborders_total$CASES_4[is.na(outborders_total$CASES_4)] <- 0
+outborders_total$CASES_5[is.na(outborders_total$CASES_5)] <- 0
 outborders_total$MONTH_ALL_CASES[is.na(outborders_total$MONTH_ALL_CASES)] <- 0
 
+#Creating this border_case_'n' variable with the acumulated months
 outborders_total <- outborders_total %>%
-  mutate(total_cases = MONTH_ALL_CASES + CASES_1 + CASES_2)
+  mutate(border_cases_6 = MONTH_ALL_CASES + CASES_1 + CASES_2 + CASES_3 + CASES_4 + CASES_5,
+         border_cases_5 = MONTH_ALL_CASES + CASES_1 + CASES_2 + CASES_3 + CASES_4,
+         border_cases_4 = MONTH_ALL_CASES + CASES_1 + CASES_2 + CASES_3,
+         border_cases_3 = MONTH_ALL_CASES + CASES_1 + CASES_2,
+         border_cases_2 = MONTH_ALL_CASES + CASES_1,
+         border_cases_1 = MONTH_ALL_CASES)
+
+
 
 outborders_total <- outborders_total %>%
-  select(DATES, region, total_cases)
+  select(DATES, region, border_cases_1,border_cases_2,
+         border_cases_3,border_cases_4,border_cases_5,border_cases_6)
 
-# same for borders
-
-outborders <- dates %>%
-  full_join(acled_outborders, by = c("DATES" = "EVENT_DATE"))
-
-outborders$CASES_1 <- 
-  c(NA,outborders$MONTH_CASES[1:(length(outborders$MONTH_CASES)-1)])
-
-outborders$CASES_2 <- 
-  c(NA,NA,outborders$MONTH_CASES[1:(length(outborders$MONTH_CASES)-2)])
-
-outborders$CASES_1[is.na(outborders$CASES_1)] <- 0
-outborders$CASES_2[is.na(outborders$CASES_2)] <- 0
-outborders$MONTH_CASES[is.na(outborders$MONTH_CASES)] <- 0
-
-outborders <- outborders %>%
-  mutate(border_cases = MONTH_CASES + CASES_1 + CASES_2)
-
-outborders <- outborders %>%
-  select(DATES, region, border_cases)
-
-out_violence <- outborders_total %>%
-  full_join(outborders, by = c("DATES","region"))
 
 dist <- read_csv("dist.csv")
 
@@ -198,7 +243,7 @@ acled_civ$ADMIN2 <- as.factor(acled_civ$ADMIN2)
 
 ## Joint
 
-final <- out_violence %>%
+final <- outborders_total %>%
   full_join(acled_civ, by = c("DATES" = "EVENT_DATE", "region" = "ADMIN2"))
   
 final <- final %>%
@@ -209,48 +254,63 @@ final$EVENT[is.na(final$EVENT)] <- 0
 
 final$distance <- final$distance/1000
 
+#creating the Dummy variable for the lag_cases and distance
+
 final_full <- final %>%
-  mutate(border_ev = ifelse(border_cases != 0, 1, 0),
+  mutate(border_ev_1 = ifelse(border_cases_1 != 0, 1, 0),
+         border_ev_2 = ifelse(border_cases_2 != 0, 1, 0),
+         border_ev_3 = ifelse(border_cases_3 != 0, 1, 0),
+         border_ev_4 = ifelse(border_cases_4 != 0, 1, 0),
+         border_ev_5 = ifelse(border_cases_5 != 0, 1, 0),
+         border_ev_6 = ifelse(border_cases_6 != 0, 1, 0),
          border_region = ifelse(distance < 200, 1, 0))
 
-write_csv(final_full, "final_full.csv")
 
 ## Regressions
 
-reg1 <- lm(SUM_EVENTS ~ distance*border_cases, data = final)
+reg1_1 <- lm(EVENT ~ border_region*border_ev_1, data = final_full)
+reg1_2 <- lm(EVENT ~ border_region*border_ev_2, data = final_full)
+reg1_3 <- lm(EVENT ~ border_region*border_ev_3, data = final_full)
+reg1_4 <- lm(EVENT ~ border_region*border_ev_4, data = final_full)
+reg1_5 <- lm(EVENT ~ border_region*border_ev_5, data = final_full)
+reg1_6 <- lm(EVENT ~ border_region*border_ev_6, data = final_full)
 
-reg2 <- lm(SUM_EVENTS ~ distance*total_cases, data = final)
+reg2 <- lm(SUM_EVENTS ~ border_region*border_ev, data = final_full)
 
 logit_1 <- glm(EVENT ~ distance*border_cases, data = final, family = "binomial")
 
 logit_2 <- glm(EVENT ~ distance*total_cases, data = final, family = "binomial")
 
-stargazer(reg1, reg2, logit_1, logit_2, type = "text", title="Results", align=TRUE)
+stargazer(reg1_1, reg1_3, reg1_6, title="Results", align=TRUE)
 
 
 
 ## New Regressions
 
 
-reg3 <- lm(SUM_EVENTS ~ border_region*border_ev, data = final_full)
+reg3 <- lm(EVENT ~ border_region*border_ev, data = final_full)
+
+reg4 <- plm (EVENT ~ border_region*border_ev, data = final_full, index = "region", model = "within")
 
 logit_3 <- glm(EVENT ~ border_region*border_ev, data = final_full, family = "binomial")
 
 
-stargazer(reg3, logit_3, type = "text", title="Results", align=TRUE)
+stargazer(reg2, reg3,logit_3, title="Results", align=TRUE)
 
 ## New Regressions (fixed effects)
 library(survival)
 library(foreign)
 library(plm)
 library(car)
+library(pROC)
+library(estimatr)
+library(fixest)
 
-reg4 <- plm (SUM_EVENTS ~ border_region*border_ev, data = final_full, index = "region", model = "within")
 
 logit_4 <- clogit(EVENT ~ border_region*border_ev + strata(region), data = final_full)
 
 
-stargazer(reg3, reg4, logit_3, logit_4, type = "text", title="Results without and with fixed effects", align=TRUE)
+stargazer(reg1_1, reg1_3, reg1_6, type = "text", title="Results without and with fixed effects", align=TRUE)
 
 
 prob <- predict(logit_3, type="response")
@@ -261,27 +321,91 @@ plot(roc1, col="red", main = "Area Under ROC for LOGIT_3" , ylab="Sensitivity", 
 auc(roc1)
 text(0.5, 0.2, "AUC = 0.6323")
 
+## Andre's regression
+
+final_full_2009 <- final_full %>%
+  filter(DATES > 2009)
+
+# Count of events, using OLS with standard errors clustered by region
+summary(lm_robust(SUM_EVENTS ~ border_region*border_ev, cluster = region, data = final_full))
+# Indicator for 1+ events, using OLS with standard errors clustered by region
+reg1 <- lm_robust(EVENT ~ border_region*border_ev_1, cluster = region, data = final_full)
+reg2 <- lm_robust(EVENT ~ border_region*border_ev_2, cluster = region, data = final_full)
+reg3 <- lm_robust(EVENT ~ border_region*border_ev_3, cluster = region, data = final_full)
+reg4 <- lm_robust(EVENT ~ border_region*border_ev_4, cluster = region, data = final_full)
+reg5 <- lm_robust(EVENT ~ border_region*border_ev_5, cluster = region, data = final_full)
+reg6 <- lm_robust(EVENT ~ border_region*border_ev_6, cluster = region, data = final_full)
+
+summary(reg6)
+
+summary(lm_robust(EVENT ~ border_region*border_ev_1, cluster = region, data = final_full_2009))
+summary(lm_robust(EVENT ~ border_region*border_ev_2, cluster = region, data = final_full_2009))
+summary(lm_robust(EVENT ~ border_region*border_ev_3, cluster = region, data = final_full_2009))
+summary(lm_robust(EVENT ~ border_region*border_ev_4, cluster = region, data = final_full_2009))
+summary(lm_robust(EVENT ~ border_region*border_ev_5, cluster = region, data = final_full_2009))
+summary(lm_robust(EVENT ~ border_region*border_ev_6, cluster = region, data = final_full_2009))
+
+
+
+# Indicator for 1+ events, using GLM with standard errors clustered by region
+summary(feglm(EVENT ~ border_region*border_ev, family = binomial("logit"), data = final_full), cluster = ~ region)
+
+stargazer(reg3, reg4,logit_3,logit_4, type = "text", title="Results", align=TRUE)
    
 ## Spatial Visualization
 
-acled_clean_ml %>%
-  filter(ADMIN1 == "Sikasso") %>%
+eventos <- acled_outborders %>%
+  filter(ADMIN1 == "Sikasso"|ADMIN1 == "Cascades" | ADMIN1 == "Sud-Ouest")
+
+acled_outborders$EVENT <- 1
+
+acled_outborders %>%
+  select(-c(MONTH_CASES)) %>%
   ggplot() +
   geom_sf(data = ml_regions) +
-  geom_sf(aes(alpha = 0.4), color = 'red') +
-  geom_sf(data = acled_clean_ml, aes(alpha = 0.2), color = 'blue') +
-  labs(title = "Events in Mali 1997-2021 - Borders in red", color = "events", alpha = "") + 
+  geom_sf(data = bf_regions) +
+  geom_sf(data = ci_regions1) +
+  geom_sf(aes(alpha = 0.25), color = 'red') +
+  geom_sf(data = acled_civ, aes(alpha = 0.25), color = 'blue') +
+  labs(title = "Events in CIV 1997-2021 in Blue",
+       subtitle = "Borders'cases Mali and BF in red",
+       alpha = "Events") + 
   theme_minimal()
 
-acled_clean_bf %>%
-  filter(ADMIN1 == "Cascades" | ADMIN1 == "Sud-Ouest") %>%  
+
+ggplot() +
+  geom_point (data = final_full, aes(x = DATES, y = EVENT)) +
+  geom_sf(data = bf_regions) +
+  geom_sf(data = ci_regions1) +
+  geom_sf(aes(alpha = 0.25), color = 'red') +
+  geom_sf(data = acled_civ, aes(alpha = 0.25), color = 'blue') +
+  labs(title = "Events in CIV 1997-2021 in Blue",
+       subtitle = "Borders'cases Mali and BF in red",
+       alpha = "Events") + 
+  theme_minimal()
+
+
+
+
+acled_clean %>%
+  filter(ADMIN1 == "Sikasso"|ADMIN1 == "Cascades" | ADMIN1 == "Sud-Ouest") %>%  
   ggplot() +
     geom_sf(data = bf_regions) +
-    geom_sf(aes(alpha = 0.25), color = 'red') +
-    geom_sf(data = acled_clean_bf, aes(alpha = 0.2), color = 'blue') +
-    labs(title = "Events in BF 1997-2021 - Borders in red", color = "events", alpha = "") + 
+    geom_sf(data = ml_regions) +
+    geom_sf(data = ci_regions1) +
+    geom_sf(aes(alpha = 0.1), color = 'red') +
+    geom_sf(data = acled_clean_ml_bf, aes(alpha = 0.1), color = 'blue') +
+    labs(title = "Events in Mali & BF 1997-2021 - Borders in red", color = "events", alpha = "") + 
     theme_minimal()
-  
+
+acled_clean_ml_bf <- acled_clean %>%
+  filter(COUNTRY != "Ivory Coast")
+
+acled_clean_ml_bf <- acled_clean_ml_bf %>%
+  filter(ADMIN1 != "Sikasso" & ADMIN1 != "Cascades" & ADMIN1 != "Sud-Ouest")
+
+
+
 ## Time Visualization
   
 
